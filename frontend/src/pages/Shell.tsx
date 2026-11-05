@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
+import { DatacenterArt } from "../components/DatacenterArt";
 
 export default function Shell() {
   const { user, logout } = useAuth();
@@ -7,6 +8,7 @@ export default function Shell() {
 
   return (
     <div className="app-shell">
+      <DatacenterArt variant="mark" className="shell-dc" />
       <header className="topbar">
         <div className="brand-lockup" onClick={() => nav("/")}>
           <span className="glyph">H</span>

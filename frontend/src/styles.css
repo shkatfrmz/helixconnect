@@ -93,6 +93,42 @@ select:focus { outline: none; border-color: var(--accent); }
   mask-image: radial-gradient(circle at 24% 38%, black, transparent 68%);
   pointer-events: none;
 }
+
+.dc-art { display: block; pointer-events: none; }
+.dc-rack { fill: var(--panel-2); stroke: var(--line-strong); stroke-width: 1; }
+.dc-rack-cap { fill: var(--line-strong); opacity: 0.6; }
+.dc-slot-line { stroke: var(--line); stroke-width: 1; }
+.dc-cable { fill: none; stroke: var(--line-strong); stroke-width: 1.2; }
+.dc-pulse { fill: var(--accent); filter: drop-shadow(0 0 3px var(--accent)); }
+.dc-led { fill: var(--accent); opacity: 0.25; animation: dc-blink 2.8s ease-in-out infinite; }
+.dc-led-ok { fill: var(--ok); }
+@keyframes dc-blink {
+  0%, 100% { opacity: 0.15; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dc-led { animation: none; opacity: 0.5; }
+  .dc-pulse animateMotion { display: none; }
+}
+
+.login-dc {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.5;
+  mask-image: linear-gradient(to top, black 0%, black 55%, transparent 92%);
+}
+
+.shell-dc {
+  position: fixed;
+  right: -10px;
+  bottom: -10px;
+  width: 340px;
+  height: auto;
+  opacity: 0.16;
+  z-index: 1;
+}
 .login-brand, .login-panel { position: relative; z-index: 1; }
 .login-brand {
   padding: 72px 72px;
@@ -271,7 +307,7 @@ select:focus { outline: none; border-color: var(--accent); }
 }
 .ghost:hover { border-color: var(--accent); }
 
-.page { padding: 28px 32px 64px; flex: 1; max-width: 1280px; width: 100%; margin: 0 auto; }
+.page { padding: 28px 32px 64px; flex: 1; max-width: 1280px; width: 100%; margin: 0 auto; position: relative; z-index: 2; }
 .page.session { max-width: none; }
 .hero-strip {
   display: flex;

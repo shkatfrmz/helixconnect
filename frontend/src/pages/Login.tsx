@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth";
 import { api, Health } from "../api";
+import { DatacenterArt } from "../components/DatacenterArt";
 
 export default function Login() {
   const { login, acceptToken, user } = useAuth();
@@ -73,6 +74,7 @@ export default function Login() {
 
   return (
     <div className="login-root">
+      <DatacenterArt variant="hero" className="login-dc" />
       <div className="login-wash" />
       <aside className="login-brand">
         <div className="mark">HX</div>
