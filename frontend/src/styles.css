@@ -223,15 +223,15 @@ select:focus { outline: none; border-color: var(--accent); }
 }
 .login-form button, .blade footer button, .bezel-tools button,
 .join-bar button, .session-overlay button, .host-form button, .sideboard section > button, .modal button[type="submit"] {
-  background: var(--accent);
-  color: var(--accent-ink);
+  background: var(--accent-2);
+  color: var(--ink);
   border: 0;
   padding: 11px 16px;
   font-weight: 600;
   cursor: pointer;
 }
 .login-form button:hover, .blade footer button:hover, .join-bar button:hover, .host-form button:hover, .modal button[type="submit"]:hover {
-  filter: brightness(1.08);
+  background: var(--accent-3);
 }
 .login-form button:disabled, .blade footer button:disabled {
   opacity: 0.4;
