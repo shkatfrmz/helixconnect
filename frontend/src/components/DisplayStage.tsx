@@ -173,11 +173,11 @@ export default function DisplayStage({
       const w = surface.width;
       const h = surface.height;
       t += 0.016;
-      gfx.fillStyle = "#120e14";
+      gfx.fillStyle = "#060a0e";
       gfx.fillRect(0, 0, w, h);
       if (conn.protocol === "ssh") drawTerminal(gfx, w, h, t);
       else drawDesktop(gfx, w, h, t, conn.protocol);
-      gfx.fillStyle = "rgba(216, 148, 88, 0.05)";
+      gfx.fillStyle = "rgba(53, 192, 204, 0.04)";
       for (let y = 0; y < h; y += 3) gfx.fillRect(0, y, w, 1);
       raf = requestAnimationFrame(draw);
     }
@@ -197,39 +197,39 @@ export default function DisplayStage({
 
 function drawDesktop(ctx: CanvasRenderingContext2D, w: number, h: number, t: number, protocol: string) {
   const g = ctx.createLinearGradient(0, 0, w, h);
-  g.addColorStop(0, "#2a1c28");
-  g.addColorStop(1, "#3a2a22");
+  g.addColorStop(0, "#111823");
+  g.addColorStop(1, "#0a0e13");
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, w, h);
-  ctx.fillStyle = "#1a141c";
+  ctx.fillStyle = "#0d131b";
   ctx.fillRect(0, h - 42, w, 42);
-  ctx.fillStyle = "#d89458";
+  ctx.fillStyle = "#35c0cc";
   ctx.fillRect(8, h - 34, 86, 26);
-  ctx.fillStyle = "#f4e6d4";
-  ctx.font = "500 22px Fraunces, serif";
+  ctx.fillStyle = "#e7ecf2";
+  ctx.font = "600 22px Inter, system-ui, sans-serif";
   ctx.fillText(protocol === "vnc" ? "Remote framebuffer" : "Remote desktop session", 24, 48);
-  ctx.font = "14px IBM Plex Mono, monospace";
-  ctx.fillStyle = "#b59a82";
+  ctx.font = "14px JetBrains Mono, monospace";
+  ctx.fillStyle = "#8a96a6";
   ctx.fillText("Helix display · preview", 24, 72);
   for (let i = 0; i < 6; i++) {
     const x = 40 + (i % 3) * 240;
     const y = 120 + Math.floor(i / 3) * 200;
-    ctx.fillStyle = "rgba(38, 29, 36, 0.92)";
+    ctx.fillStyle = "rgba(17, 24, 35, 0.92)";
     ctx.fillRect(x, y, 210, 160);
-    ctx.strokeStyle = "rgba(216, 148, 88, 0.4)";
+    ctx.strokeStyle = "rgba(53, 192, 204, 0.35)";
     ctx.strokeRect(x, y, 210, 160);
-    ctx.fillStyle = "#d89458";
+    ctx.fillStyle = "#35c0cc";
     ctx.fillRect(x + 16, y + 16, 28, 28);
-    ctx.fillStyle = "#f4e6d4";
-    ctx.font = "16px Fraunces, serif";
+    ctx.fillStyle = "#e7ecf2";
+    ctx.font = "600 16px Inter, system-ui, sans-serif";
     ctx.fillText(["Files", "Terminal", "Browser", "Notes", "Mail", "Settings"][i], x + 54, y + 36);
-    ctx.fillStyle = "#b59a82";
-    ctx.font = "12px IBM Plex Mono, monospace";
+    ctx.fillStyle = "#8a96a6";
+    ctx.font = "12px JetBrains Mono, monospace";
     ctx.fillText("preview window", x + 16, y + 80);
   }
   const mx = w * 0.55 + Math.sin(t) * 80;
   const my = h * 0.42 + Math.cos(t * 0.8) * 40;
-  ctx.fillStyle = "#f4e6d4";
+  ctx.fillStyle = "#e7ecf2";
   ctx.beginPath();
   ctx.moveTo(mx, my);
   ctx.lineTo(mx + 14, my + 22);
@@ -240,10 +240,10 @@ function drawDesktop(ctx: CanvasRenderingContext2D, w: number, h: number, t: num
 }
 
 function drawTerminal(ctx: CanvasRenderingContext2D, w: number, h: number, t: number) {
-  ctx.fillStyle = "#120e14";
+  ctx.fillStyle = "#060a0e";
   ctx.fillRect(0, 0, w, h);
-  ctx.fillStyle = "#d89458";
-  ctx.font = "15px IBM Plex Mono, monospace";
+  ctx.fillStyle = "#35c0cc";
+  ctx.font = "15px JetBrains Mono, monospace";
   const lines = [
     "helix@devbox:~$",
     "display client ready",
