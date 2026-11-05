@@ -35,6 +35,25 @@ export const grants = persistent ? await db.loadGrants() : [];
 export const sessions = new Map();
 export const rooms = new Map();
 
+// Access is default-deny: an operator needs a grant to touch a host at all
+// (see evaluateAccess below). Seed one for the demo "operator" account so
+// the quick-start experience in the README still works out of the box,
+// without every deployment needing to hand-configure a grant before anyone
+// can open a session.
+if (grants.length === 0) {
+  const demoOperator = directory.find((u) => u.username === "operator");
+  if (demoOperator) {
+    createGrant({
+      actor: { displayName: "System", username: "system" },
+      user: demoOperator,
+      conn: null,
+      startsAt: new Date().toISOString(),
+      endsAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      reason: "Demo default grant — all hosts"
+    });
+  }
+}
+
 // Fire-and-forget persistence writes: route handlers already mutate the
 // in-memory arrays synchronously so the API stays fast and simple; this
 // mirrors that mutation to Postgres when configured, without making every
@@ -195,9 +214,12 @@ export function evaluateAccess(actor, connectionId) {
   if (role === "admin") {
     return { allowed: true, standing: true, grant: null, reason: null };
   }
+  // Default-deny: an operator needs an explicit grant (for this connection,
+  // or a "*" grant covering all hosts) to access a host. No grant at all
+  // means no access, not open access.
   const relevant = grantsForUser(userId).filter((g) => g.connectionId === connectionId || g.connectionId === "*");
   if (relevant.length === 0) {
-    return { allowed: true, standing: true, grant: null, reason: null };
+    return { allowed: false, standing: false, grant: null, reason: "No grant for this host" };
   }
   const active = relevant.find((g) => grantStatus(g) === "active");
   if (active) {

@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 import { evaluateAccess, createGrant, grantStatus } from "./store.js";
 
 const admin = { role: "admin", sub: "u-admin" };
-const operator = { role: "operator", sub: "u-operator", username: "operator", displayName: "Jordan Lee" };
+// Deliberately NOT "u-operator" — that id has a real seeded demo grant
+// (see store.js), which would make every access check below pass regardless
+// of what this test file is actually trying to isolate.
+const operator = { role: "operator", sub: "u-test-operator", username: "test-operator", displayName: "Test Operator" };
 const actor = { displayName: "Alex Rivera" };
 
 test("admins can always access any connection", () => {
@@ -12,10 +15,10 @@ test("admins can always access any connection", () => {
   assert.equal(access.standing, true);
 });
 
-test("an operator with no grants for a host has standing access (default-open demo policy)", () => {
+test("an operator with no grants for a host is denied (default-deny policy)", () => {
   const access = evaluateAccess(operator, "conn-untouched-by-grants");
-  assert.equal(access.allowed, true);
-  assert.equal(access.standing, true);
+  assert.equal(access.allowed, false);
+  assert.equal(access.reason, "No grant for this host");
 });
 
 test("an operator with an active grant for the host is allowed", () => {
