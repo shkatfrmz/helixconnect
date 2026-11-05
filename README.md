@@ -1,46 +1,48 @@
 # Helix Remote
 
-Custom web console for Apache Guacamole. Guacamole (guacd) stays the protocol backend. Helix is the operator UI.
+Custom web console for remote desktops. Download the project and run one script. Helix starts the console; Docker starts the display relay if it is installed.
+
+## Start
+
+Linux / macOS:
+
+```bash
+chmod +x start.sh
+./start.sh
+```
+
+Windows:
+
+```bat
+start.bat
+```
+
+Then open http://localhost:5173 and sign in with `admin` / `admin` or `operator` / `operator`.
+
+The script installs Node packages on first run, starts `guacd` when Docker is available, and launches Helix. Stop with Ctrl+C.
+
+## What you need
+
+- Node.js 18 or newer (https://nodejs.org)
+- Docker Desktop or Docker Engine, only if you want live RDP / VNC / SSH
+  Without Docker, Helix still opens in preview mode.
 
 ## Layout
 
-- `frontend` — Vite + React control surface
-- `backend` — Express API, session tokens, guacamole-lite WebSocket tunnel
-- `docker-compose.yml` — official `guacamole/guacd` (and optional stock Guacamole UI)
+- `frontend` — operator console
+- `backend` — sessions, grants, users, display tunnel
+- `docker-compose.yml` — official `guacamole/guacd` (one container)
 
-## Run the custom UI
+Users do not start the API or Vite by hand. `start.sh` / `start.bat` do that.
 
-```bash
-npm install
-npm run dev
-```
-
-Open the Vite preview. Sign in with `admin` / `admin` or `operator` / `operator`.
-
-Without guacd, Helix runs in demo mode: catalog, session chrome, and a local display stream. Attach a live backend to stream a real desktop.
-
-## Live Guacamole backend
-
-```bash
-docker compose up -d
-```
-
-guacd listens on `4822`. Point Helix at it:
-
-```bash
-GUACD_HOST=127.0.0.1 GUACD_PORT=4822 npm run dev
-```
-
-Optional stock Guacamole web UI (kept in the background):
+## Optional stock Guacamole UI
 
 ```bash
 docker compose --profile stock-ui up -d
 ```
 
-That UI is at `http://localhost:8080/`. Helix remains the custom front-end.
+That UI is at http://localhost:8080/. Helix remains the console.
 
 ## How it is wired
 
-Browser (Helix) → Express API → guacamole-lite `/ws/guacamole` → guacd → RDP / VNC / SSH
-
-guacamole-common-js is the client protocol stack Guacamole documents for custom apps. This console uses that model: Helix owns auth, catalog, and chrome; guacd owns remote desktop translation.
+Browser (Helix) → Express API → display tunnel `/ws/display` → guacd → RDP / VNC / SSH
