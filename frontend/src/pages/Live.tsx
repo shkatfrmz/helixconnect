@@ -84,8 +84,14 @@ export default function Live() {
           <tbody>
             {sessions.length === 0 && (
               <tr>
-                <td colSpan={7} className="muted">
-                  No live sessions. Open a connection from the catalog.
+                <td colSpan={7}>
+                  <div className="empty-row">
+                    <div className="empty-row-photo" />
+                    <div>
+                      <strong>No live sessions</strong>
+                      <p className="muted">Open a connection from the catalog to start one.</p>
+                    </div>
+                  </div>
                 </td>
               </tr>
             )}

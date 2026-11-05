@@ -19,8 +19,14 @@ export default function Join() {
 
   return (
     <div className="page">
-      <p className="eyebrow">Share join</p>
-      <h1>{error || `Joining ${code}…`}</h1>
+      <div className="join-status">
+        <div className="join-status-photo" />
+        <div className="join-status-body">
+          <p className="eyebrow">Share join</p>
+          <h1>{error || `Joining ${code}…`}</h1>
+          {error && <p className="muted">Check the code and try again, or ask the host for a new share link.</p>}
+        </div>
+      </div>
     </div>
   );
 }

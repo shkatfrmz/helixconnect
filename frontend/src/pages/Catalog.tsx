@@ -97,7 +97,13 @@ export default function Catalog() {
       </div>
 
       {filtered.length === 0 ? (
-        <p className="empty">No hosts match those filters.</p>
+        <div className="empty-row">
+          <div className="empty-row-photo empty-row-photo-alt" />
+          <div>
+            <strong>No hosts match those filters</strong>
+            <p className="muted">Try a different search term, protocol, or group.</p>
+          </div>
+        </div>
       ) : (
         <div className="rack">
           {filtered.map((c) => (
