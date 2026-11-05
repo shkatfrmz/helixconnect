@@ -74,6 +74,7 @@ export default function Login() {
 
   return (
     <div className="login-root">
+      <div className="login-photo" />
       <DatacenterArt variant="hero" className="login-dc" />
       <div className="login-wash" />
       <aside className="login-brand">
