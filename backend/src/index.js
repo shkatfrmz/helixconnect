@@ -3,11 +3,13 @@ import cors from "cors";
 import http from "http";
 import net from "net";
 import jwt from "jsonwebtoken";
+import rateLimit from "express-rate-limit";
 import { WebSocketServer } from "ws";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
-import { CRYPTO_CYPHER, CRYPTO_KEY, encryptToken } from "./crypto.js";
+import { CRYPTO_CYPHER, CRYPTO_KEY, encryptToken, hashPassword, verifyPassword } from "./crypto.js";
+import { JWT_SECRET, CORS_ORIGINS, IS_PRODUCTION } from "./config.js";
 import {
   directory,
   connections,
@@ -33,21 +35,45 @@ import {
   grantView,
   grantStatus,
   upsertSsoUser,
-  initials
+  initials,
+  persistUser,
+  persistConnection,
+  persistGrant
 } from "./store.js";
 import { authorizeUrl, exchangeCode, publicOrigin, publicSsoStatus } from "./oidc.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3001);
-const JWT_SECRET = process.env.HELIX_JWT_SECRET || "helix-dev-secret";
 const GUACD_HOST = process.env.GUACD_HOST || "127.0.0.1";
 const GUACD_PORT = Number(process.env.GUACD_PORT || 4822);
 const IDLE_CHECK_MS = 5000;
 
 const app = express();
-app.set("trust proxy", true);
-app.use(cors());
+// "true" trusts every hop's X-Forwarded-For, which lets a client spoof its
+// own IP and bypass the login rate limiter below. Default to trusting
+// nothing; set HELIX_TRUST_PROXY to the number of reverse-proxy hops in
+// front of this server (e.g. "1" for a single nginx/ALB in front of it).
+const trustProxy = process.env.HELIX_TRUST_PROXY ? Number(process.env.HELIX_TRUST_PROXY) : false;
+app.set("trust proxy", trustProxy);
+app.use(
+  cors({
+    origin(origin, callback) {
+      // Same-origin requests (no Origin header — curl, server-to-server) are
+      // always allowed; browser cross-origin requests must match the allowlist.
+      if (!origin || CORS_ORIGINS.includes(origin)) return callback(null, true);
+      callback(new Error("Not allowed by CORS"));
+    }
+  })
+);
 app.use(express.json());
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many login attempts. Try again later." }
+});
 
 function signToken(user) {
   return jwt.sign(
@@ -104,7 +130,7 @@ function guacamoleSettings(conn, extras = {}) {
   };
   if (conn.protocol === "rdp") {
     settings.security = conn.security || "any";
-    settings["ignore-cert"] = conn.ignoreCert !== false;
+    settings["ignore-cert"] = conn.ignoreCert === true;
     settings["enable-wallpaper"] = false;
   }
   if (conn.protocol === "ssh") {
@@ -187,10 +213,12 @@ app.get("/api/health", async (_req, res) => {
   });
 });
 
-app.post("/api/login", (req, res) => {
+app.post("/api/login", loginLimiter, (req, res) => {
   const { username, password } = req.body || {};
-  const user = directory.find((u) => u.username === username && u.password === password);
-  if (!user) return res.status(401).json({ error: "Invalid credentials" });
+  const user = directory.find((u) => u.username === username);
+  if (!user || !verifyPassword(password, user.password)) {
+    return res.status(401).json({ error: "Invalid credentials" });
+  }
   if (user.disabled) return res.status(403).json({ error: "Account disabled" });
   return finishLogin(res, user);
 });
@@ -204,7 +232,7 @@ app.get("/api/auth/:provider/start", (req, res) => {
   res.json({ url });
 });
 
-app.get("/api/auth/:provider/callback", async (req, res) => {
+app.get("/api/auth/:provider/callback", loginLimiter, async (req, res) => {
   const provider = req.params.provider;
   const frontend = (process.env.USER_FRONTEND_ORIGIN || `${publicOrigin(req)}/login`).replace(/\/$/, "");
   function bounce(query) {
@@ -241,7 +269,7 @@ app.post("/api/users", auth, requireAdmin, (req, res) => {
   const user = {
     id: `u-${Date.now().toString(36)}`,
     username: body.username,
-    password: body.password,
+    password: hashPassword(body.password),
     displayName: body.displayName || body.username,
     role: body.role === "admin" ? "admin" : "operator",
     avatar: initials(body.displayName || body.username),
@@ -250,6 +278,7 @@ app.post("/api/users", auth, requireAdmin, (req, res) => {
     disabled: false
   };
   directory.push(user);
+  persistUser(user);
   logActivity(req.user.displayName, "Created user", user.username, "admin");
   res.status(201).json(publicUser(user));
 });
@@ -261,8 +290,9 @@ app.patch("/api/users/:id", auth, requireAdmin, (req, res) => {
   if (body.displayName !== undefined) user.displayName = body.displayName;
   if (body.email !== undefined) user.email = body.email;
   if (body.role === "admin" || body.role === "operator") user.role = body.role;
-  if (body.password) user.password = body.password;
+  if (body.password) user.password = hashPassword(body.password);
   if (body.disabled !== undefined) user.disabled = Boolean(body.disabled);
+  persistUser(user);
   logActivity(req.user.displayName, "Updated user", user.username, "admin");
   res.json(publicUser(user));
 });
@@ -302,6 +332,7 @@ app.post("/api/grants/:id/revoke", auth, requireAdmin, (req, res) => {
   const grant = grants.find((g) => g.id === req.params.id);
   if (!grant) return res.status(404).json({ error: "Grant not found" });
   grant.revoked = true;
+  persistGrant(grant);
   for (const session of activeSessions()) {
     if (session.grantId === grant.id) {
       endSession(session, "grant-revoked");
@@ -344,10 +375,13 @@ app.post("/api/connections", auth, (req, res) => {
     os: body.os || "Unknown",
     resolution: body.resolution || "1280x720",
     colorDepth: body.colorDepth || 24,
-    ignoreCert: true,
+    // Certificate validation defaults ON; an operator must opt out per-connection
+    // rather than every RDP host silently trusting an unverified certificate.
+    ignoreCert: Boolean(body.ignoreCert),
     security: body.protocol === "rdp" ? "any" : undefined
   };
   connections.push(conn);
+  persistConnection(conn);
   logActivity(req.user.displayName, "Added connection", conn.name, "admin");
   res.status(201).json(publicConnection(conn));
 });
@@ -362,6 +396,8 @@ app.patch("/api/connections/:id", auth, (req, res) => {
   });
   if (body.port !== undefined) conn.port = Number(body.port);
   if (body.tags) conn.tags = body.tags;
+  if (body.ignoreCert !== undefined) conn.ignoreCert = Boolean(body.ignoreCert);
+  persistConnection(conn);
   logActivity(req.user.displayName, "Updated connection", conn.name, "admin");
   res.json(publicConnection(conn));
 });
@@ -619,6 +655,9 @@ async function attachGuacamoleLite() {
 }
 
 server.listen(PORT, "0.0.0.0", async () => {
-  console.log(`[helix] API listening on :${PORT}`);
+  console.log(`[helix] API listening on :${PORT} (${IS_PRODUCTION ? "production" : "development"})`);
+  if (IS_PRODUCTION && CORS_ORIGINS.every((o) => o.includes("localhost") || o.includes("127.0.0.1"))) {
+    console.log("[helix] WARNING: HELIX_CORS_ORIGINS is unset in production — set it to your real frontend origin(s)");
+  }
   await attachGuacamoleLite();
 });

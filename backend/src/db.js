@@ -1,0 +1,170 @@
+import pg from "pg";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import { DATABASE_URL } from "./config.js";
+import { encryptSecret, decryptSecret } from "./crypto.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+export const pool = DATABASE_URL ? new pg.Pool({ connectionString: DATABASE_URL }) : null;
+
+export function hasDatabase() {
+  return Boolean(pool);
+}
+
+export async function migrate() {
+  if (!pool) return;
+  const schema = fs.readFileSync(path.join(__dirname, "schema.sql"), "utf8");
+  await pool.query(schema);
+  console.log("[helix] database schema ready");
+}
+
+// --- users -----------------------------------------------------------
+
+export async function loadUsers() {
+  const { rows } = await pool.query("SELECT * FROM users ORDER BY created_at");
+  return rows.map(rowToUser);
+}
+
+export async function saveUser(user) {
+  await pool.query(
+    `INSERT INTO users (id, username, password_hash, display_name, role, avatar, email, provider, disabled)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     ON CONFLICT (id) DO UPDATE SET
+       username = EXCLUDED.username,
+       password_hash = EXCLUDED.password_hash,
+       display_name = EXCLUDED.display_name,
+       role = EXCLUDED.role,
+       avatar = EXCLUDED.avatar,
+       email = EXCLUDED.email,
+       provider = EXCLUDED.provider,
+       disabled = EXCLUDED.disabled`,
+    [user.id, user.username, user.password || "", user.displayName, user.role, user.avatar, user.email || "", user.provider || "local", Boolean(user.disabled)]
+  );
+}
+
+function rowToUser(row) {
+  return {
+    id: row.id,
+    username: row.username,
+    password: row.password_hash,
+    displayName: row.display_name,
+    role: row.role,
+    avatar: row.avatar,
+    email: row.email || "",
+    provider: row.provider,
+    disabled: row.disabled
+  };
+}
+
+// --- connections -------------------------------------------------------
+
+export async function loadConnections() {
+  const { rows } = await pool.query("SELECT * FROM connections ORDER BY created_at");
+  return rows.map(rowToConnection);
+}
+
+export async function saveConnection(conn) {
+  const encryptedPassword = conn.password ? encryptSecret(conn.password) : "";
+  await pool.query(
+    `INSERT INTO connections (id, name, protocol, hostname, port, username, password_encrypted, tags, "group", status, latency_ms, last_seen, description, os, resolution, color_depth, ignore_cert, security)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+     ON CONFLICT (id) DO UPDATE SET
+       name = EXCLUDED.name, protocol = EXCLUDED.protocol, hostname = EXCLUDED.hostname,
+       port = EXCLUDED.port, username = EXCLUDED.username, password_encrypted = EXCLUDED.password_encrypted,
+       tags = EXCLUDED.tags, "group" = EXCLUDED."group", status = EXCLUDED.status,
+       latency_ms = EXCLUDED.latency_ms, last_seen = EXCLUDED.last_seen, description = EXCLUDED.description,
+       os = EXCLUDED.os, resolution = EXCLUDED.resolution, color_depth = EXCLUDED.color_depth,
+       ignore_cert = EXCLUDED.ignore_cert, security = EXCLUDED.security`,
+    [
+      conn.id, conn.name, conn.protocol, conn.hostname, conn.port, conn.username || "", encryptedPassword,
+      JSON.stringify(conn.tags || []), conn.group || "Unassigned", conn.status || "online", conn.latencyMs ?? null,
+      conn.lastSeen || "Just now", conn.description || "", conn.os || "Unknown", conn.resolution || "1280x720",
+      conn.colorDepth || 24, Boolean(conn.ignoreCert), conn.security || null
+    ]
+  );
+}
+
+function rowToConnection(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    protocol: row.protocol,
+    hostname: row.hostname,
+    port: row.port,
+    username: row.username || "",
+    password: row.password_encrypted ? decryptSecret(row.password_encrypted) : "",
+    tags: row.tags || [],
+    group: row.group,
+    status: row.status,
+    latencyMs: row.latency_ms,
+    lastSeen: row.last_seen,
+    description: row.description,
+    os: row.os,
+    resolution: row.resolution,
+    colorDepth: row.color_depth,
+    ignoreCert: row.ignore_cert,
+    security: row.security || undefined
+  };
+}
+
+// --- grants --------------------------------------------------------------
+
+export async function loadGrants() {
+  const { rows } = await pool.query("SELECT * FROM grants ORDER BY created_at DESC");
+  return rows.map(rowToGrant);
+}
+
+export async function saveGrant(grant) {
+  await pool.query(
+    `INSERT INTO grants (id, user_id, username, connection_id, connection_name, starts_at, ends_at, reason, created_by, revoked)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+     ON CONFLICT (id) DO UPDATE SET revoked = EXCLUDED.revoked`,
+    [grant.id, grant.userId, grant.username, grant.connectionId, grant.connectionName, grant.startsAt, grant.endsAt, grant.reason || "", grant.createdBy || "", Boolean(grant.revoked)]
+  );
+}
+
+function rowToGrant(row) {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    username: row.username,
+    connectionId: row.connection_id,
+    connectionName: row.connection_name,
+    startsAt: row.starts_at.toISOString(),
+    endsAt: row.ends_at.toISOString(),
+    reason: row.reason || "",
+    createdBy: row.created_by,
+    createdAt: row.created_at.toISOString(),
+    revoked: row.revoked
+  };
+}
+
+// --- activity --------------------------------------------------------------
+
+export async function loadActivity(limit = 80) {
+  const { rows } = await pool.query("SELECT * FROM activity ORDER BY created_at DESC LIMIT $1", [limit]);
+  return rows.map(rowToActivity);
+}
+
+export async function saveActivityEntry(entry) {
+  await pool.query(
+    `INSERT INTO activity (id, user_name, action, target, type) VALUES ($1,$2,$3,$4,$5)`,
+    [entry.id, entry.user, entry.action, entry.target, entry.type]
+  );
+  await pool.query(
+    `DELETE FROM activity WHERE id NOT IN (SELECT id FROM activity ORDER BY created_at DESC LIMIT 200)`
+  );
+}
+
+function rowToActivity(row) {
+  return {
+    id: row.id,
+    user: row.user_name,
+    action: row.action,
+    target: row.target,
+    time: row.created_at.toISOString(),
+    type: row.type
+  };
+}

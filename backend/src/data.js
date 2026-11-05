@@ -1,8 +1,16 @@
+import { hashPassword } from "./crypto.js";
+
+// Seed credentials are for local/demo use only. Set HELIX_SEED_ADMIN_PASSWORD
+// and HELIX_SEED_OPERATOR_PASSWORD to override them; in production, change
+// these passwords (or disable these accounts) immediately after first boot.
+const SEED_ADMIN_PASSWORD = process.env.HELIX_SEED_ADMIN_PASSWORD || "admin";
+const SEED_OPERATOR_PASSWORD = process.env.HELIX_SEED_OPERATOR_PASSWORD || "operator";
+
 export const users = [
   {
     id: "u-admin",
     username: "admin",
-    password: "admin",
+    password: hashPassword(SEED_ADMIN_PASSWORD),
     displayName: "Alex Rivera",
     role: "admin",
     avatar: "AR",
@@ -13,7 +21,7 @@ export const users = [
   {
     id: "u-operator",
     username: "operator",
-    password: "operator",
+    password: hashPassword(SEED_OPERATOR_PASSWORD),
     displayName: "Jordan Lee",
     role: "operator",
     avatar: "JL",

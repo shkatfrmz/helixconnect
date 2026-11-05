@@ -6,6 +6,23 @@ services:
     ports:
       - "4822:4822"
 
+  # Helix's own persistence (users, connections, grants, activity). Point the
+  # backend's DATABASE_URL at this to survive restarts; leave DATABASE_URL
+  # unset to keep the zero-config in-memory demo mode.
+  app-db:
+    image: postgres:16-alpine
+    container_name: helix-app-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: helix
+      POSTGRES_USER: helix
+      POSTGRES_PASSWORD: helix
+    ports:
+      - "5433:5432"
+    volumes:
+      - helix-app-db:/var/lib/postgresql/data
+
+  # Guacamole's own database (only used by the optional stock-ui profile below).
   postgres:
     image: postgres:16-alpine
     container_name: helix-postgres
@@ -16,6 +33,8 @@ services:
       POSTGRES_PASSWORD: guacamole_password
     volumes:
       - helix-pg:/var/lib/postgresql/data
+    profiles:
+      - stock-ui
 
   guacamole:
     image: guacamole/guacamole:1.6.0
@@ -39,3 +58,4 @@ services:
 
 volumes:
   helix-pg:
+  helix-app-db:

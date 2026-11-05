@@ -7,8 +7,11 @@
     "dev": "concurrently -n api,web -c green,cyan \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\"",
     "dev:backend": "npm run dev --prefix backend",
     "dev:frontend": "npm run dev --prefix frontend",
+    "dev:full": "docker compose up -d && npm run dev",
+    "stop": "docker compose down",
     "build": "npm run build --prefix frontend",
     "start": "npm run start --prefix backend",
+    "test": "npm test --prefix backend",
     "postinstall": "npm install --prefix backend && npm install --prefix frontend"
   },
   "devDependencies": {

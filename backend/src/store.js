@@ -1,17 +1,61 @@
 import { users, connections as seedConnections, activity as seedActivity } from "./data.js";
-import { newId, shareCode } from "./crypto.js";
+import { newId, shareCode, hashPassword } from "./crypto.js";
+import * as db from "./db.js";
 
-export const directory = users;
-export const connections = seedConnections.map((c) => ({
-  ...c,
-  password: c.password || "",
-  ignoreCert: true,
-  security: c.protocol === "rdp" ? "any" : undefined
-}));
-export const activity = [...seedActivity];
-export const grants = [];
+const persistent = db.hasDatabase();
+if (persistent) await db.migrate();
+
+async function seedDatabase() {
+  const existingUsers = await db.loadUsers();
+  if (existingUsers.length === 0) {
+    for (const u of users) await db.saveUser(u);
+  }
+  const existingConnections = await db.loadConnections();
+  if (existingConnections.length === 0) {
+    for (const c of seedConnections) await db.saveConnection({ ...c, ignoreCert: c.ignoreCert ?? false });
+  }
+}
+if (persistent) await seedDatabase();
+
+export const directory = persistent
+  ? await db.loadUsers()
+  : users;
+export const connections = persistent
+  ? await db.loadConnections()
+  : seedConnections.map((c) => ({
+      ...c,
+      password: c.password || "",
+      ignoreCert: c.ignoreCert ?? false,
+      security: c.protocol === "rdp" ? "any" : undefined
+    }));
+export const activity = persistent
+  ? await db.loadActivity()
+  : [...seedActivity];
+export const grants = persistent ? await db.loadGrants() : [];
 export const sessions = new Map();
 export const rooms = new Map();
+
+// Fire-and-forget persistence writes: route handlers already mutate the
+// in-memory arrays synchronously so the API stays fast and simple; this
+// mirrors that mutation to Postgres when configured, without making every
+// request handler async. Failures are logged, not thrown — a DB hiccup
+// should not take the live session down.
+function persist(label, fn) {
+  if (!persistent) return;
+  fn().catch((err) => console.error(`[helix] persistence failed (${label}):`, err.message));
+}
+
+export function persistUser(user) {
+  persist("user", () => db.saveUser(user));
+}
+
+export function persistConnection(conn) {
+  persist("connection", () => db.saveConnection(conn));
+}
+
+export function persistGrant(grant) {
+  persist("grant", () => db.saveGrant(grant));
+}
 
 export function publicUser(user) {
   return {
@@ -51,6 +95,7 @@ export function upsertSsoUser({ email, displayName, username, provider }) {
     user.email = mail || user.email;
     user.provider = provider;
     user.avatar = user.avatar || initials(user.displayName);
+    persistUser(user);
     return user;
   }
   let uname = username || mail.split("@")[0] || "user";
@@ -58,7 +103,7 @@ export function upsertSsoUser({ email, displayName, username, provider }) {
   user = {
     id: newId("u"),
     username: uname,
-    password: "",
+    password: "", // SSO accounts have no local password; password login is rejected for empty hashes
     displayName: displayName || uname,
     role: "operator",
     avatar: initials(displayName || uname),
@@ -67,6 +112,7 @@ export function upsertSsoUser({ email, displayName, username, provider }) {
     disabled: false
   };
   directory.push(user);
+  persistUser(user);
   return user;
 }
 
@@ -76,15 +122,17 @@ export function publicConnection(conn) {
 }
 
 export function logActivity(user, action, target, type = "session") {
-  activity.unshift({
+  const entry = {
     id: newId("act"),
     user,
     action,
     target,
     time: "Just now",
     type
-  });
+  };
+  activity.unshift(entry);
   if (activity.length > 80) activity.pop();
+  persist("activity", () => db.saveActivityEntry(entry));
 }
 
 export function sessionView(session) {
@@ -186,6 +234,7 @@ export function createGrant({ actor, user, conn, startsAt, endsAt, reason }) {
     revoked: false
   };
   grants.unshift(grant);
+  persistGrant(grant);
   return grant;
 }
 
