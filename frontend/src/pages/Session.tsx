@@ -5,6 +5,8 @@ import DisplayStage from "../components/DisplayStage";
 
 type Tick = { cpu: number; mem: number; fps: number; idleRemainingMs?: number | null };
 
+const PROTO_LABEL: Record<string, string> = { rdp: "RDP", vnc: "VNC", ssh: "SSH", telnet: "TELNET", kubernetes: "K8S" };
+
 export default function Session() {
   const { id } = useParams();
   const [params] = useSearchParams();
@@ -12,6 +14,9 @@ export default function Session() {
   const sid = params.get("sid") || "";
   const [conn, setConn] = useState<Connection | null>(null);
   const [session, setSession] = useState<SessionT | null>(null);
+  const [allConnections, setAllConnections] = useState<Connection[]>([]);
+  const [openSessions, setOpenSessions] = useState<Record<string, SessionT>>({});
+  const [switchError, setSwitchError] = useState("");
   const [tick, setTick] = useState<Tick | null>(null);
   const [clipboard, setClipboard] = useState("");
   const [outgoingClip, setOutgoingClip] = useState("");
@@ -40,6 +45,50 @@ export default function Session() {
     if (!sid) return;
     api<SessionT>(`/api/sessions/${sid}`).then(setSession).catch(() => undefined);
   }, [sid]);
+
+  useEffect(() => {
+    api<Connection[]>("/api/connections").then(setAllConnections);
+  }, []);
+
+  // Track which connections already have a live session so the tree can
+  // switch back to one without opening a second session for the same host.
+  useEffect(() => {
+    if (!id || !session) return;
+    setOpenSessions((prev) => ({ ...prev, [id]: session }));
+  }, [id, session]);
+
+  async function switchTo(target: Connection) {
+    setSwitchError("");
+    if (target.id === id) return;
+    const existing = openSessions[target.id];
+    if (existing && existing.status !== "disconnected") {
+      nav(`/session/${target.id}?sid=${existing.id}`, { replace: true });
+      return;
+    }
+    try {
+      const sess = await api<SessionT>("/api/sessions", {
+        method: "POST",
+        body: JSON.stringify({
+          connectionId: target.id,
+          width: Math.round(window.innerWidth * 0.6),
+          height: Math.round(window.innerHeight * 0.7)
+        })
+      });
+      setOpenSessions((prev) => ({ ...prev, [target.id]: sess }));
+      nav(`/session/${target.id}?sid=${sess.id}`, { replace: true });
+    } catch (err) {
+      setSwitchError(err instanceof Error ? err.message : `Could not connect to ${target.name}`);
+    }
+  }
+
+  const groupedConnections = useMemo(() => {
+    const groups = new Map<string, Connection[]>();
+    for (const c of allConnections) {
+      if (!groups.has(c.group)) groups.set(c.group, []);
+      groups.get(c.group)!.push(c);
+    }
+    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [allConnections]);
 
   useEffect(() => {
     if (!id) return;
@@ -204,6 +253,35 @@ export default function Session() {
       </div>
 
       <div className="session-layout">
+        <aside className="conn-tree">
+          {groupedConnections.map(([groupName, items]) => (
+            <div key={groupName}>
+              <p className="conn-tree-group">{groupName}</p>
+              {items.map((c) => {
+                const locked = c.status === "offline" || (c.access ? !c.access.allowed : false);
+                const isActive = c.id === id;
+                const isOpen = Boolean(openSessions[c.id] && openSessions[c.id].status !== "disconnected");
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className={`conn-tree-item ${isActive ? "active" : ""}`}
+                    disabled={locked}
+                    title={locked ? c.access?.reason || "Host offline" : `${c.hostname}:${c.port}`}
+                    onClick={() => switchTo(c)}
+                  >
+                    <span className={`dot ${c.status}`} />
+                    <span className="name">{c.name}</span>
+                    {isOpen && <span className="live-mark" title="Session open" />}
+                    <span className="proto-tag">{PROTO_LABEL[c.protocol]}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+          {switchError && <p className="form-error">{switchError}</p>}
+        </aside>
+
         <div className="bezel" ref={stageRef}>
           <div className="bezel-chrome">
             <span className="traffic" aria-hidden>
