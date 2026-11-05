@@ -36,6 +36,7 @@ docker compose version >nul 2>nul
 if not errorlevel 1 (
   echo Starting display relay...
   docker compose up -d guacd
+  if errorlevel 1 echo Could not reach the Docker daemon. Helix will open in preview mode.
   goto RUN
 )
 
@@ -43,6 +44,7 @@ where docker-compose >nul 2>nul
 if not errorlevel 1 (
   echo Starting display relay...
   docker-compose up -d guacd
+  if errorlevel 1 echo Could not reach the Docker daemon. Helix will open in preview mode.
   goto RUN
 )
 
