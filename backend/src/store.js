@@ -87,7 +87,8 @@ export function publicUser(user) {
     avatar: user.avatar,
     email: user.email || "",
     provider: user.provider || "local",
-    disabled: Boolean(user.disabled)
+    disabled: Boolean(user.disabled),
+    favorites: user.favorites || []
   };
 }
 

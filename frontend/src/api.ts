@@ -38,6 +38,7 @@ export type User = {
   email?: string;
   provider?: string;
   disabled?: boolean;
+  favorites?: string[];
 };
 
 export type Access = {

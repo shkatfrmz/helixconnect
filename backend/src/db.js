@@ -29,8 +29,8 @@ export async function loadUsers() {
 
 export async function saveUser(user) {
   await pool.query(
-    `INSERT INTO users (id, username, password_hash, display_name, role, avatar, email, provider, disabled)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+    `INSERT INTO users (id, username, password_hash, display_name, role, avatar, email, provider, disabled, favorites)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
      ON CONFLICT (id) DO UPDATE SET
        username = EXCLUDED.username,
        password_hash = EXCLUDED.password_hash,
@@ -39,8 +39,9 @@ export async function saveUser(user) {
        avatar = EXCLUDED.avatar,
        email = EXCLUDED.email,
        provider = EXCLUDED.provider,
-       disabled = EXCLUDED.disabled`,
-    [user.id, user.username, user.password || "", user.displayName, user.role, user.avatar, user.email || "", user.provider || "local", Boolean(user.disabled)]
+       disabled = EXCLUDED.disabled,
+       favorites = EXCLUDED.favorites`,
+    [user.id, user.username, user.password || "", user.displayName, user.role, user.avatar, user.email || "", user.provider || "local", Boolean(user.disabled), JSON.stringify(user.favorites || [])]
   );
 }
 
@@ -54,7 +55,8 @@ function rowToUser(row) {
     avatar: row.avatar,
     email: row.email || "",
     provider: row.provider,
-    disabled: row.disabled
+    disabled: row.disabled,
+    favorites: row.favorites || []
   };
 }
 

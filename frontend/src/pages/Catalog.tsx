@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { MouseEvent, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, Connection, Stats } from "../api";
+import { useAuth } from "../auth";
 
 const PROTO_LABEL: Record<string, string> = {
   rdp: "RDP",
@@ -11,6 +12,7 @@ const PROTO_LABEL: Record<string, string> = {
 };
 
 export default function Catalog() {
+  const { user, refreshUser } = useAuth();
   const [connections, setConnections] = useState<Connection[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [q, setQ] = useState("");
@@ -28,14 +30,23 @@ export default function Catalog() {
   }, []);
 
   const groups = useMemo(() => ["all", ...new Set(connections.map((c) => c.group))], [connections]);
+  const favorites = useMemo(() => new Set(user?.favorites || []), [user?.favorites]);
 
-  const filtered = connections.filter((c) => {
-    const hay = `${c.name} ${c.hostname} ${c.os} ${c.tags.join(" ")}`.toLowerCase();
-    if (q && !hay.includes(q.toLowerCase())) return false;
-    if (proto !== "all" && c.protocol !== proto) return false;
-    if (group !== "all" && c.group !== group) return false;
-    return true;
-  });
+  const filtered = connections
+    .filter((c) => {
+      const hay = `${c.name} ${c.hostname} ${c.os} ${c.tags.join(" ")}`.toLowerCase();
+      if (q && !hay.includes(q.toLowerCase())) return false;
+      if (proto !== "all" && c.protocol !== proto) return false;
+      if (group !== "all" && c.group !== group) return false;
+      return true;
+    })
+    .sort((a, b) => Number(favorites.has(b.id)) - Number(favorites.has(a.id)));
+
+  async function toggleFavorite(e: MouseEvent, id: string) {
+    e.stopPropagation();
+    await api(`/api/me/favorites/${id}`, { method: "POST" });
+    refreshUser();
+  }
 
   function requestOpen(c: Connection) {
     if (c.access && !c.access.allowed) return;
@@ -110,6 +121,14 @@ export default function Catalog() {
             <article key={c.id} className={`blade ${c.status}`}>
               <header>
                 <span className={`proto ${c.protocol}`}>{PROTO_LABEL[c.protocol]}</span>
+                <button
+                  type="button"
+                  className={`star ${favorites.has(c.id) ? "on" : ""}`}
+                  title={favorites.has(c.id) ? "Unpin" : "Pin to top"}
+                  onClick={(e) => toggleFavorite(e, c.id)}
+                >
+                  ★
+                </button>
                 <span className={`status ${c.status}`}>{c.status}</span>
               </header>
               <h3>{c.name}</h3>

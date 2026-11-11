@@ -280,6 +280,20 @@ app.get("/api/me", auth, (req, res) => {
   res.json(publicUser(user));
 });
 
+app.post("/api/me/favorites/:connectionId", auth, (req, res) => {
+  const user = directory.find((u) => u.id === req.user.sub);
+  if (!user) return res.status(404).json({ error: "Not found" });
+  const conn = connections.find((c) => c.id === req.params.connectionId);
+  if (!conn) return res.status(404).json({ error: "Connection not found" });
+  const favorites = new Set(user.favorites || []);
+  const favorited = favorites.has(conn.id);
+  if (favorited) favorites.delete(conn.id);
+  else favorites.add(conn.id);
+  user.favorites = [...favorites];
+  persistUser(user);
+  res.json({ favorites: user.favorites });
+});
+
 app.get("/api/users", auth, requireAdmin, (_req, res) => {
   res.json(directory.map(publicUser));
 });

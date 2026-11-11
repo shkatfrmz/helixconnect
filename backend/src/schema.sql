@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT DEFAULT '',
   provider TEXT NOT NULL DEFAULT 'local',
   disabled BOOLEAN NOT NULL DEFAULT FALSE,
+  favorites JSONB NOT NULL DEFAULT '[]',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -72,3 +73,4 @@ CREATE INDEX IF NOT EXISTS idx_activity_created ON activity (created_at DESC);
 -- new columns need their own idempotent ADD COLUMN here.
 ALTER TABLE connections ADD COLUMN IF NOT EXISTS clipboard_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE connections ADD COLUMN IF NOT EXISTS file_transfer_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS favorites JSONB NOT NULL DEFAULT '[]';
