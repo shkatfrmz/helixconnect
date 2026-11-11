@@ -556,6 +556,29 @@ select:focus { outline: none; border-color: var(--accent); }
 .kv li:last-child { border-bottom: 0; padding-bottom: 0; }
 .kv span { color: var(--muted); }
 
+.admin-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 2px;
+}
+.admin-tabs button {
+  background: transparent;
+  color: var(--muted);
+  border: 0;
+  padding: 10px 14px;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.admin-tabs button:hover { color: var(--ink); }
+.admin-tabs button.active { color: var(--accent); border-bottom-color: var(--accent-2); }
+.audit-filters { margin-bottom: 14px; }
+.audit-row-warn td { color: #ffb4a8; }
+
 .admin-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

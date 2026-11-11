@@ -217,9 +217,13 @@ app.post("/api/login", loginLimiter, (req, res) => {
   const { username, password } = req.body || {};
   const user = directory.find((u) => u.username === username);
   if (!user || !verifyPassword(password, user.password)) {
+    logActivity(username || "unknown", "Failed login", "Auth", "auth");
     return res.status(401).json({ error: "Invalid credentials" });
   }
-  if (user.disabled) return res.status(403).json({ error: "Account disabled" });
+  if (user.disabled) {
+    logActivity(user.displayName, "Login blocked (disabled)", "Auth", "auth");
+    return res.status(403).json({ error: "Account disabled" });
+  }
   return finishLogin(res, user);
 });
 
@@ -408,8 +412,16 @@ app.get("/api/connections/:id", auth, (req, res) => {
   res.json({ ...publicConnection(conn), access: evaluateAccess(req.user, conn.id) });
 });
 
-app.get("/api/activity", auth, (_req, res) => {
-  res.json(activity);
+app.get("/api/activity", auth, (req, res) => {
+  const { type, q, limit } = req.query || {};
+  let list = activity;
+  if (type && type !== "all") list = list.filter((a) => a.type === type);
+  if (q) {
+    const needle = String(q).toLowerCase();
+    list = list.filter((a) => `${a.user} ${a.action} ${a.target}`.toLowerCase().includes(needle));
+  }
+  const cap = Number(limit) || 80;
+  res.json(list.slice(0, cap));
 });
 
 app.get("/api/stats", auth, async (_req, res) => {

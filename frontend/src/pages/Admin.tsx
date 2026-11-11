@@ -18,8 +18,12 @@ function localInput(d: Date) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+const TABS = ["Overview", "Users", "Access", "Hosts", "Audit"] as const;
+type Tab = (typeof TABS)[number];
+
 export default function Admin() {
   const { user } = useAuth();
+  const [tab, setTab] = useState<Tab>("Overview");
   const [health, setHealth] = useState<Health | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
   const [activity, setActivity] = useState<Activity[]>([]);
@@ -36,11 +40,12 @@ export default function Admin() {
     endsAt: localInput(new Date(Date.now() + 60 * 60 * 1000)),
     reason: ""
   });
+  const [auditType, setAuditType] = useState("all");
+  const [auditQ, setAuditQ] = useState("");
 
   function refresh() {
     api<Health>("/api/health").then(setHealth);
     api<Stats>("/api/stats").then(setStats);
-    api<Activity[]>("/api/activity").then(setActivity);
     api<Connection[]>("/api/connections").then(setConnections);
     if (user?.role === "admin") {
       api<User[]>("/api/users").then(setUsers);
@@ -51,6 +56,14 @@ export default function Admin() {
   useEffect(() => {
     refresh();
   }, [user?.role]);
+
+  useEffect(() => {
+    const qs = new URLSearchParams();
+    if (auditType !== "all") qs.set("type", auditType);
+    if (auditQ) qs.set("q", auditQ);
+    qs.set("limit", "200");
+    api<Activity[]>(`/api/activity?${qs.toString()}`).then(setActivity);
+  }, [auditType, auditQ, tab]);
 
   async function addHost(e: FormEvent) {
     e.preventDefault();
@@ -135,6 +148,15 @@ export default function Admin() {
         </div>
       </section>
 
+      <nav className="admin-tabs">
+        {TABS.filter((t) => user?.role === "admin" || t === "Overview").map((t) => (
+          <button key={t} type="button" className={t === tab ? "active" : ""} onClick={() => setTab(t)}>
+            {t}
+          </button>
+        ))}
+      </nav>
+
+      {tab === "Overview" && (
       <div className="admin-grid">
         <article className="panel">
           <h3>Status</h3>
@@ -183,7 +205,11 @@ export default function Admin() {
             </li>
           </ol>
         </article>
+      </div>
+      )}
 
+      {tab === "Users" && user?.role === "admin" && (
+      <div className="admin-grid">
         {user?.role === "admin" && (
           <article className="panel wide">
             <h3>Users</h3>
@@ -260,7 +286,11 @@ export default function Admin() {
             </table>
           </article>
         )}
+      </div>
+      )}
 
+      {tab === "Access" && user?.role === "admin" && (
+      <div className="admin-grid">
         {user?.role === "admin" && (
           <article className="panel wide">
             <h3>Timed access</h3>
@@ -359,7 +389,11 @@ export default function Admin() {
             </table>
           </article>
         )}
+      </div>
+      )}
 
+      {tab === "Hosts" && user?.role === "admin" && (
+      <div className="admin-grid">
         {user?.role === "admin" && (
           <article className="panel wide">
             <h3>Add connection</h3>
@@ -409,9 +443,27 @@ export default function Admin() {
             <p className="tiny">{connections.length} hosts in catalog</p>
           </article>
         )}
+      </div>
+      )}
 
+      {tab === "Audit" && user?.role === "admin" && (
+      <div className="admin-grid">
         <article className="panel wide">
-          <h3>Recent activity</h3>
+          <h3>Audit log</h3>
+          <p className="muted">Every sign-in, grant, and admin action — newest first.</p>
+          <div className="filters audit-filters">
+            <input placeholder="Search who, what, target" value={auditQ} onChange={(e) => setAuditQ(e.target.value)} />
+            <select value={auditType} onChange={(e) => setAuditType(e.target.value)}>
+              <option value="all">All types</option>
+              <option value="auth">Auth</option>
+              <option value="session">Session</option>
+              <option value="share">Share</option>
+              <option value="grant">Grant</option>
+              <option value="admin">Admin</option>
+              <option value="clipboard">Clipboard</option>
+              <option value="system">System</option>
+            </select>
+          </div>
           <table>
             <thead>
               <tr>
@@ -419,21 +471,32 @@ export default function Admin() {
                 <th>Who</th>
                 <th>Action</th>
                 <th>Target</th>
+                <th>Type</th>
               </tr>
             </thead>
             <tbody>
-              {activity.slice(0, 12).map((a) => (
-                <tr key={a.id}>
-                  <td>{a.time}</td>
-                  <td>{a.user}</td>
-                  <td>{a.action}</td>
-                  <td>{a.target}</td>
+              {activity.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="muted">
+                    No matching audit entries.
+                  </td>
                 </tr>
-              ))}
+              ) : (
+                activity.map((a) => (
+                  <tr key={a.id} className={a.action.toLowerCase().includes("failed") ? "audit-row-warn" : ""}>
+                    <td>{a.time}</td>
+                    <td>{a.user}</td>
+                    <td>{a.action}</td>
+                    <td>{a.target}</td>
+                    <td className="tiny">{a.type}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </article>
       </div>
+      )}
     </div>
   );
 }
