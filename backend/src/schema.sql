@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS connections (
   security TEXT,
   clipboard_enabled BOOLEAN NOT NULL DEFAULT TRUE,
   file_transfer_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  recording_enabled BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -74,6 +75,23 @@ CREATE TABLE IF NOT EXISTS grant_requests (
   resolved_by TEXT
 );
 
+CREATE TABLE IF NOT EXISTS recordings (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  connection_id TEXT NOT NULL,
+  connection_name TEXT NOT NULL,
+  protocol TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  username TEXT NOT NULL,
+  display_name TEXT,
+  mode TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'recording',
+  started_at TIMESTAMPTZ NOT NULL,
+  ended_at TIMESTAMPTZ,
+  size_bytes BIGINT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS activity (
   id TEXT PRIMARY KEY,
   user_name TEXT,
@@ -85,6 +103,7 @@ CREATE TABLE IF NOT EXISTS activity (
 
 CREATE INDEX IF NOT EXISTS idx_grants_user ON grants (user_id);
 CREATE INDEX IF NOT EXISTS idx_activity_created ON activity (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_recordings_user ON recordings (user_id);
 
 -- Additive migrations for deployments created before a column existed.
 -- CREATE TABLE IF NOT EXISTS above is a no-op against an existing table, so
@@ -96,3 +115,4 @@ ALTER TABLE grants ADD COLUMN IF NOT EXISTS recurrence JSONB;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret_encrypted TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_pending_encrypted TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE connections ADD COLUMN IF NOT EXISTS recording_enabled BOOLEAN NOT NULL DEFAULT FALSE;

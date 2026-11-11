@@ -29,6 +29,27 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return res.json();
 }
 
+// Playback/download need the raw bytes of a .guac recording rather than
+// parsed JSON, but still have to carry the bearer token — a plain <a href>
+// or <video src> can't attach an Authorization header, so recordings are
+// always fetched as a blob and handed to the player or an object URL.
+export async function apiBlob(path: string): Promise<Blob> {
+  const token = getToken();
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(path, { headers });
+  if (res.status === 401) {
+    setToken(null);
+    window.location.href = "/login";
+    throw new Error("Unauthorized");
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(body.error || "Request failed");
+  }
+  return res.blob();
+}
+
 export type User = {
   id: string;
   username: string;
@@ -82,7 +103,25 @@ export type Connection = {
   colorDepth: number;
   clipboardEnabled?: boolean;
   fileTransferEnabled?: boolean;
+  recordingEnabled?: boolean;
   access?: Access;
+};
+
+export type Recording = {
+  id: string;
+  sessionId: string;
+  connectionId: string;
+  connectionName: string;
+  protocol: string;
+  userId: string;
+  username: string;
+  displayName?: string;
+  mode: "live" | "demo";
+  status: "recording" | "complete";
+  startedAt: string;
+  endedAt: string | null;
+  durationMs: number | null;
+  sizeBytes: number;
 };
 
 export type Session = {

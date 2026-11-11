@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { api, Activity, Connection, Grant, GrantRequest, Health, Stats, User } from "../api";
+import { api, Activity, Connection, Grant, GrantRequest, Health, Recording, Stats, User } from "../api";
 import { useAuth } from "../auth";
+import RecordingPlayer from "../components/RecordingPlayer";
 
 const emptyHost = {
   name: "",
@@ -12,7 +13,8 @@ const emptyHost = {
   os: "",
   description: "",
   clipboardEnabled: true,
-  fileTransferEnabled: false
+  fileTransferEnabled: false,
+  recordingEnabled: false
 };
 
 function toMinutes(hhmm: string) {
@@ -27,7 +29,7 @@ function localInput(d: Date) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-const TABS = ["Overview", "Users", "Access", "Hosts", "Audit"] as const;
+const TABS = ["Overview", "Users", "Access", "Hosts", "Recordings", "Audit"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function Admin() {
@@ -60,6 +62,8 @@ export default function Admin() {
   const [mfaMsg, setMfaMsg] = useState("");
   const [auditType, setAuditType] = useState("all");
   const [auditQ, setAuditQ] = useState("");
+  const [recordings, setRecordings] = useState<Recording[]>([]);
+  const [playingId, setPlayingId] = useState<string | null>(null);
 
   function refresh() {
     api<Health>("/api/health").then(setHealth);
@@ -69,6 +73,7 @@ export default function Admin() {
       api<User[]>("/api/users").then(setUsers);
       api<Grant[]>("/api/grants").then(setGrants);
       api<GrantRequest[]>("/api/grant-requests").then(setRequests);
+      api<Recording[]>("/api/recordings").then(setRecordings);
     }
   }
 
@@ -124,6 +129,11 @@ export default function Admin() {
 
   async function patchConnection(id: string, body: Partial<Connection>) {
     await api(`/api/connections/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+    refresh();
+  }
+
+  async function deleteRecording(id: string) {
+    await api(`/api/recordings/${id}`, { method: "DELETE" });
     refresh();
   }
 
@@ -674,6 +684,14 @@ export default function Admin() {
                 />
                 File transfer allowed (RDP/SSH only)
               </label>
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  checked={form.recordingEnabled}
+                  onChange={(e) => setForm({ ...form, recordingEnabled: e.target.checked })}
+                />
+                Record sessions on this host
+              </label>
               <button type="submit">Map host</button>
             </form>
             {msg && <p className="tiny">{msg}</p>}
@@ -684,7 +702,9 @@ export default function Admin() {
         {user?.role === "admin" && (
           <article className="panel wide">
             <h3>Hosts</h3>
-            <p className="muted">Per-host clipboard and file-transfer access. File transfer only applies to RDP and SSH.</p>
+            <p className="muted">
+              Per-host clipboard, file-transfer, and recording access. File transfer only applies to RDP and SSH.
+            </p>
             <table>
               <thead>
                 <tr>
@@ -692,6 +712,7 @@ export default function Admin() {
                   <th>Protocol</th>
                   <th>Clipboard</th>
                   <th>File transfer</th>
+                  <th>Recording</th>
                 </tr>
               </thead>
               <tbody>
@@ -722,12 +743,92 @@ export default function Admin() {
                         {c.protocol === "vnc" ? "N/A" : c.fileTransferEnabled ? "Allowed" : "Blocked"}
                       </button>
                     </td>
+                    <td>
+                      <button
+                        className="ghost"
+                        type="button"
+                        onClick={() => patchConnection(c.id, { recordingEnabled: !c.recordingEnabled })}
+                      >
+                        {c.recordingEnabled ? "On" : "Off"}
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </article>
         )}
+      </div>
+      )}
+
+      {tab === "Recordings" && user?.role === "admin" && (
+      <div className="admin-grid">
+        <article className="panel wide">
+          <h3>Session recordings</h3>
+          <p className="muted">Every recorded session across every host. Enable recording per host from the Hosts tab.</p>
+          <table>
+            <thead>
+              <tr>
+                <th>Host</th>
+                <th>User</th>
+                <th>Started</th>
+                <th>Duration</th>
+                <th>Size</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {recordings.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="muted">
+                    No recordings yet. Turn on recording for a host in the Hosts tab, then open a session.
+                  </td>
+                </tr>
+              ) : (
+                recordings.map((r) => (
+                  <tr key={r.id}>
+                    <td>
+                      {r.connectionName}
+                      <div className="tiny">{r.protocol.toUpperCase()}</div>
+                    </td>
+                    <td>{r.displayName || r.username}</td>
+                    <td className="tiny">{new Date(r.startedAt).toLocaleString()}</td>
+                    <td className="tiny">
+                      {r.durationMs != null ? `${Math.round(r.durationMs / 1000)}s` : "—"}
+                    </td>
+                    <td className="tiny">{r.sizeBytes ? `${Math.max(1, Math.round(r.sizeBytes / 1024))} KB` : "—"}</td>
+                    <td className="tiny">{r.status === "recording" ? "Recording…" : "Ready"}</td>
+                    <td>
+                      <div className="row-actions">
+                        <button
+                          className="ghost"
+                          type="button"
+                          disabled={r.status !== "complete"}
+                          onClick={() => setPlayingId(r.id)}
+                        >
+                          Play
+                        </button>
+                        {user?.role === "admin" && (
+                          <button className="ghost" type="button" onClick={() => deleteRecording(r.id)}>
+                            Delete
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+          {playingId && (
+            <div className="modal-back" onClick={() => setPlayingId(null)}>
+              <div className="modal recording-player" onClick={(e) => e.stopPropagation()}>
+                <RecordingPlayer recordingId={playingId} onClose={() => setPlayingId(null)} />
+              </div>
+            </div>
+          )}
+        </article>
       </div>
       )}
 

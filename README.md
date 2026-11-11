@@ -62,9 +62,10 @@ See `.env.example` for the full list of environment variables.
 
 With `DATABASE_URL` unset, the app behaves exactly as before: in-memory, demo-friendly, resets on restart. With it set:
 
-- `users`, `connections`, `grants`, and `activity` are persisted to Postgres (schema auto-created from `backend/src/schema.sql`).
+- `users`, `connections`, `grants`, `grant_requests`, `recordings`, and `activity` are persisted to Postgres (schema auto-created from `backend/src/schema.sql`).
 - Connection passwords (target host credentials) are encrypted at rest with `HELIX_CRYPTO_KEY`, not stored in plaintext.
 - User passwords are always hashed with bcrypt, whether persisted or in-memory.
+- Session recordings themselves are `.guac` files on disk (`HELIX_RECORDINGS_DIR`, default `backend/recordings/`) — only their metadata (who, which host, when, size) lives in Postgres/memory. Deleting a recording from the admin UI removes both.
 - Live sessions, WebSocket rooms, and share codes stay in-memory — a socket only means something to the process holding it, so this state is rebuilt on reconnect rather than restored across a restart.
 
 ## Testing

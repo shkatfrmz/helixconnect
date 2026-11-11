@@ -28,13 +28,15 @@ export const connections = persistent
       ignoreCert: c.ignoreCert ?? false,
       security: c.protocol === "rdp" ? "any" : undefined,
       clipboardEnabled: c.clipboardEnabled ?? true,
-      fileTransferEnabled: c.fileTransferEnabled ?? false
+      fileTransferEnabled: c.fileTransferEnabled ?? false,
+      recordingEnabled: c.recordingEnabled ?? false
     }));
 export const activity = persistent
   ? await db.loadActivity()
   : [...seedActivity];
 export const grants = persistent ? await db.loadGrants() : [];
 export const grantRequests = persistent ? await db.loadGrantRequests() : [];
+export const recordings = persistent ? await db.loadRecordings() : [];
 export const sessions = new Map();
 export const rooms = new Map();
 
@@ -81,6 +83,77 @@ export function persistGrant(grant) {
 
 export function persistGrantRequest(request) {
   persist("grant request", () => db.saveGrantRequest(request));
+}
+
+export function persistRecording(rec) {
+  persist("recording", () => db.saveRecording(rec));
+}
+
+export function recordingView(r) {
+  return {
+    id: r.id,
+    sessionId: r.sessionId,
+    connectionId: r.connectionId,
+    connectionName: r.connectionName,
+    protocol: r.protocol,
+    userId: r.userId,
+    username: r.username,
+    displayName: r.displayName,
+    mode: r.mode,
+    status: r.status,
+    startedAt: r.startedAt,
+    endedAt: r.endedAt,
+    durationMs: r.endedAt ? new Date(r.endedAt).getTime() - new Date(r.startedAt).getTime() : null,
+    sizeBytes: r.sizeBytes || 0
+  };
+}
+
+// Called right after a session is created for a connection with
+// recordingEnabled — guacd (or, in demo mode, our own synthesizer) starts
+// writing frames immediately, so the metadata row is created up front in
+// "recording" status and finalized once the session ends.
+export function startRecording({ session, conn }) {
+  const rec = {
+    id: newId("rec"),
+    sessionId: session.id,
+    connectionId: conn.id,
+    connectionName: conn.name,
+    protocol: conn.protocol,
+    userId: session.userId,
+    username: session.username,
+    displayName: session.displayName,
+    mode: session.mode,
+    status: "recording",
+    startedAt: session.startedAt,
+    endedAt: null,
+    sizeBytes: 0
+  };
+  recordings.unshift(rec);
+  persistRecording(rec);
+  return rec;
+}
+
+export function finishRecording(rec, sizeBytes) {
+  rec.status = "complete";
+  rec.endedAt = new Date().toISOString();
+  rec.sizeBytes = sizeBytes || 0;
+  persistRecording(rec);
+  return rec;
+}
+
+export function findRecording(id) {
+  return recordings.find((r) => r.id === id);
+}
+
+export function removeRecording(rec) {
+  const idx = recordings.indexOf(rec);
+  if (idx >= 0) recordings.splice(idx, 1);
+  persist("recording delete", () => db.deleteRecording(rec.id));
+}
+
+export function recordingsForUser(user) {
+  if (user.role === "admin") return recordings;
+  return recordings.filter((r) => r.userId === user.sub);
 }
 
 export function requestGrantView(r) {

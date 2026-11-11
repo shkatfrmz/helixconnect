@@ -728,6 +728,19 @@ select:focus { outline: none; border-color: var(--accent); }
     url("https://images.pexels.com/photos/5073493/pexels-photo-5073493.jpeg?auto=compress&cs=tinysrgb&w=300");
 }
 .row-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.recording-player.modal { width: min(780px, 94vw); }
+.recording-stage {
+  background: #000;
+  border-radius: 10px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  height: 420px;
+  border: 1px solid var(--line);
+}
+.recording-controls { display: flex; align-items: center; gap: 12px; }
+.recording-controls input[type="range"] { flex: 1; }
+.recording-time { font-family: var(--mono); white-space: nowrap; }
 .display-host { width: 100%; height: 100%; overflow: hidden; }
 .display-host.hidden { display: none; }
 .display-surface { transform-origin: 0 0; }

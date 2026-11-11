@@ -21,11 +21,22 @@ import {
 import QRCode from "qrcode";
 import { JWT_SECRET, CORS_ORIGINS, IS_PRODUCTION } from "./config.js";
 import {
+  RECORDINGS_DIR,
+  ensureRecordingsDir,
+  recordingFileName,
+  recordingFilePath,
+  recordingFileExists,
+  recordingFileSize,
+  deleteRecordingFile,
+  synthesizeDemoRecording
+} from "./recordingFile.js";
+import {
   directory,
   connections,
   activity,
   grants,
   grantRequests,
+  recordings,
   sessions,
   publicConnection,
   publicUser,
@@ -52,7 +63,13 @@ import {
   persistGrant,
   createGrantRequest,
   resolveGrantRequest,
-  requestGrantView
+  requestGrantView,
+  recordingView,
+  startRecording,
+  finishRecording,
+  findRecording,
+  removeRecording,
+  recordingsForUser
 } from "./store.js";
 import { authorizeUrl, exchangeCode, publicOrigin, publicSsoStatus } from "./oidc.js";
 
@@ -170,17 +187,43 @@ function guacamoleSettings(conn, extras = {}) {
   }
   // VNC has no protocol-level file-transfer channel in guacd — the toggle
   // is still stored per-connection but only takes effect for RDP/SSH.
+  // Session recording is a guacd-level feature (not guacamole-lite): telling
+  // guacd a recording-path/name makes it write a .guac file itself as the
+  // session plays out, independent of anything our own server does.
+  if (extras.recordingPath) {
+    settings["recording-path"] = extras.recordingPath;
+    settings["recording-name"] = extras.recordingName || "recording";
+    settings["create-recording-path"] = true;
+  }
   return settings;
 }
 
 function attachGuacamoleToken(session, conn, extras = {}) {
+  const recordingExtras = conn.recordingEnabled
+    ? { recordingPath: RECORDINGS_DIR, recordingName: recordingFileName(session.id) }
+    : {};
   session.guacamoleToken = encryptToken({
     connection: {
       type: conn.protocol,
-      settings: guacamoleSettings(conn, extras)
+      settings: guacamoleSettings(conn, { ...extras, ...recordingExtras })
     }
   });
   return session.guacamoleToken;
+}
+
+// Finds the in-progress recording tied to this session (if the connection
+// had recording enabled) and finalizes it: in live mode guacd has already
+// written the .guac file to RECORDINGS_DIR by the time the session ends, so
+// we just stat it; in demo mode there is no guacd, so we synthesize a real,
+// valid (if blank) .guac recording spanning the session's actual duration.
+function finalizeSessionRecording(session) {
+  const rec = recordings.find((r) => r.sessionId === session.id && r.status === "recording");
+  if (!rec) return;
+  const durationMs = Math.max(0, new Date(session.endedAt).getTime() - new Date(session.startedAt).getTime());
+  const sizeBytes =
+    session.mode === "demo" ? synthesizeDemoRecording(session.id, durationMs) : recordingFileSize(session.id);
+  finishRecording(rec, sizeBytes);
+  logActivity(session.displayName, "Recording saved", session.connectionName, "recording");
 }
 
 function tickIdle() {
@@ -190,6 +233,7 @@ function tickIdle() {
       const remaining = new Date(session.grantEndsAt).getTime() - now;
       if (remaining <= 0) {
         endSession(session, "grant-expired");
+        finalizeSessionRecording(session);
         logActivity("System", "Grant expired", session.connectionName, "grant");
         roomBroadcast(session.id, { type: "ended", reason: "grant-expired", session: sessionView(session) });
         continue;
@@ -205,6 +249,7 @@ function tickIdle() {
     const idleFor = now - session.lastActivity;
     if (idleFor > session.idleTimeoutMs) {
       endSession(session, "idle-timeout");
+      finalizeSessionRecording(session);
       logActivity("System", "Idle timeout", session.connectionName, "session");
       roomBroadcast(session.id, { type: "ended", reason: "idle-timeout", session: sessionView(session) });
       continue;
@@ -464,6 +509,7 @@ app.post("/api/grants/:id/revoke", auth, requireAdmin, (req, res) => {
   for (const session of activeSessions()) {
     if (session.grantId === grant.id) {
       endSession(session, "grant-revoked");
+      finalizeSessionRecording(session);
       roomBroadcast(session.id, { type: "ended", reason: "grant-revoked", session: sessionView(session) });
     }
   }
@@ -557,7 +603,10 @@ app.post("/api/connections", auth, (req, res) => {
     // defaults OFF — an admin opts a host in rather than every new RDP/SSH
     // host silently exposing a drive/SFTP channel.
     clipboardEnabled: body.clipboardEnabled !== false,
-    fileTransferEnabled: Boolean(body.fileTransferEnabled)
+    fileTransferEnabled: Boolean(body.fileTransferEnabled),
+    // Recording defaults OFF — it's an explicit per-host opt-in, same
+    // reasoning as file transfer.
+    recordingEnabled: Boolean(body.recordingEnabled)
   };
   connections.push(conn);
   persistConnection(conn);
@@ -578,6 +627,7 @@ app.patch("/api/connections/:id", auth, (req, res) => {
   if (body.ignoreCert !== undefined) conn.ignoreCert = Boolean(body.ignoreCert);
   if (body.clipboardEnabled !== undefined) conn.clipboardEnabled = Boolean(body.clipboardEnabled);
   if (body.fileTransferEnabled !== undefined) conn.fileTransferEnabled = Boolean(body.fileTransferEnabled);
+  if (body.recordingEnabled !== undefined) conn.recordingEnabled = Boolean(body.recordingEnabled);
   persistConnection(conn);
   logActivity(req.user.displayName, "Updated connection", conn.name, "admin");
   res.json(publicConnection(conn));
@@ -601,6 +651,35 @@ app.get("/api/activity", auth, (req, res) => {
   res.json(list.slice(0, cap));
 });
 
+app.get("/api/recordings", auth, (req, res) => {
+  const { connectionId } = req.query || {};
+  let list = recordingsForUser(req.user);
+  if (connectionId) list = list.filter((r) => r.connectionId === connectionId);
+  res.json(list.map(recordingView));
+});
+
+app.get("/api/recordings/:id/stream", auth, (req, res) => {
+  const rec = findRecording(req.params.id);
+  if (!rec) return res.status(404).json({ error: "Recording not found" });
+  if (req.user.role !== "admin" && rec.userId !== req.user.sub) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  if (rec.status !== "complete") return res.status(409).json({ error: "Recording is still in progress" });
+  if (!recordingFileExists(rec.sessionId)) return res.status(404).json({ error: "Recording file missing" });
+  res.setHeader("Content-Type", "application/octet-stream");
+  res.setHeader("Content-Disposition", `attachment; filename="${rec.id}.guac"`);
+  res.sendFile(recordingFilePath(rec.sessionId));
+});
+
+app.delete("/api/recordings/:id", auth, requireAdmin, (req, res) => {
+  const rec = findRecording(req.params.id);
+  if (!rec) return res.status(404).json({ error: "Recording not found" });
+  deleteRecordingFile(rec.sessionId);
+  removeRecording(rec);
+  logActivity(req.user.displayName, "Deleted recording", rec.connectionName, "recording");
+  res.json({ ok: true });
+});
+
 app.get("/api/stats", auth, async (_req, res) => {
   const guacd = await probeGuacd();
   const online = connections.filter((c) => c.status === "online").length;
@@ -614,6 +693,7 @@ app.get("/api/stats", auth, async (_req, res) => {
     relayOnline: guacd,
     sharing: live.filter((s) => s.shareCode).length,
     grants: grants.filter((g) => grantStatus(g) === "active").length,
+    recordings: recordings.length,
     sso: publicSsoStatus()
   });
 });
@@ -634,6 +714,7 @@ app.post("/api/sessions", auth, async (req, res) => {
     grant: access.grant
   });
   attachGuacamoleToken(session, conn, { username, password, width, height });
+  if (conn.recordingEnabled) startRecording({ session, conn });
   logActivity(req.user.displayName, "Opened session", conn.name, "session");
   res.json({
     ...sessionView(session),
@@ -717,6 +798,7 @@ app.post("/api/sessions/:id/disconnect", auth, (req, res) => {
   if (!session) return res.status(404).json({ error: "Session not found" });
   if (!canManage(req, session)) return res.status(403).json({ error: "Forbidden" });
   endSession(session, "force-disconnect");
+  finalizeSessionRecording(session);
   logActivity(req.user.displayName, "Force disconnect", session.connectionName, "session");
   roomBroadcast(session.id, { type: "ended", reason: "force-disconnect", session: sessionView(session) });
   res.json(sessionView(session));
@@ -842,6 +924,8 @@ async function attachGuacamoleLite() {
     console.log("[helix] guacamole-lite unavailable, demo mode only:", err.message);
   }
 }
+
+ensureRecordingsDir();
 
 server.listen(PORT, "0.0.0.0", async () => {
   console.log(`[helix] API listening on :${PORT} (${IS_PRODUCTION ? "production" : "development"})`);
