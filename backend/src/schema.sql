@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS connections (
   status TEXT DEFAULT 'online',
   latency_ms INTEGER,
   last_seen TEXT DEFAULT 'Just now',
+  last_seen_at TIMESTAMPTZ,
   description TEXT DEFAULT '',
   os TEXT DEFAULT 'Unknown',
   resolution TEXT DEFAULT '1280x720',
@@ -116,3 +117,4 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret_encrypted TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_pending_encrypted TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE connections ADD COLUMN IF NOT EXISTS recording_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE connections ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;

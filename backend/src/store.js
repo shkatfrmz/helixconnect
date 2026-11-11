@@ -29,7 +29,8 @@ export const connections = persistent
       security: c.protocol === "rdp" ? "any" : undefined,
       clipboardEnabled: c.clipboardEnabled ?? true,
       fileTransferEnabled: c.fileTransferEnabled ?? false,
-      recordingEnabled: c.recordingEnabled ?? false
+      recordingEnabled: c.recordingEnabled ?? false,
+      lastSeenAt: c.lastSeenAt ?? null
     }));
 export const activity = persistent
   ? await db.loadActivity()
@@ -75,6 +76,10 @@ export function persistUser(user) {
 
 export function persistConnection(conn) {
   persist("connection", () => db.saveConnection(conn));
+}
+
+export function persistConnectionHealth(conn) {
+  persist("connection health", () => db.updateConnectionHealth(conn));
 }
 
 export function persistGrant(grant) {

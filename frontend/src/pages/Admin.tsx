@@ -64,6 +64,7 @@ export default function Admin() {
   const [auditQ, setAuditQ] = useState("");
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [playingId, setPlayingId] = useState<string | null>(null);
+  const [checkingId, setCheckingId] = useState<string | null>(null);
 
   function refresh() {
     api<Health>("/api/health").then(setHealth);
@@ -135,6 +136,16 @@ export default function Admin() {
   async function deleteRecording(id: string) {
     await api(`/api/recordings/${id}`, { method: "DELETE" });
     refresh();
+  }
+
+  async function checkConnection(id: string) {
+    setCheckingId(id);
+    try {
+      await api(`/api/connections/${id}/check`, { method: "POST" });
+      refresh();
+    } finally {
+      setCheckingId(null);
+    }
   }
 
   async function startMfaSetup() {
@@ -704,15 +715,18 @@ export default function Admin() {
             <h3>Hosts</h3>
             <p className="muted">
               Per-host clipboard, file-transfer, and recording access. File transfer only applies to RDP and SSH.
+              Status is a real TCP check against each host's own address, rechecked automatically every 20s.
             </p>
             <table>
               <thead>
                 <tr>
                   <th>Host</th>
                   <th>Protocol</th>
+                  <th>Status</th>
                   <th>Clipboard</th>
                   <th>File transfer</th>
                   <th>Recording</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -723,6 +737,12 @@ export default function Admin() {
                       <div className="tiny">{c.hostname}</div>
                     </td>
                     <td className="tiny">{c.protocol.toUpperCase()}</td>
+                    <td>
+                      <span className={`status ${c.status}`}>{c.status}</span>
+                      <div className="tiny">
+                        {c.latencyMs != null ? `${c.latencyMs} ms` : "—"} &middot; {c.lastSeen}
+                      </div>
+                    </td>
                     <td>
                       <button
                         className="ghost"
@@ -750,6 +770,11 @@ export default function Admin() {
                         onClick={() => patchConnection(c.id, { recordingEnabled: !c.recordingEnabled })}
                       >
                         {c.recordingEnabled ? "On" : "Off"}
+                      </button>
+                    </td>
+                    <td>
+                      <button className="ghost" type="button" disabled={checkingId === c.id} onClick={() => checkConnection(c.id)}>
+                        {checkingId === c.id ? "Checking…" : "Check now"}
                       </button>
                     </td>
                   </tr>

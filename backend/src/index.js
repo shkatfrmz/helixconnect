@@ -20,6 +20,7 @@ import {
 } from "./crypto.js";
 import QRCode from "qrcode";
 import { JWT_SECRET, CORS_ORIGINS, IS_PRODUCTION } from "./config.js";
+import { probeHost, classifyStatus, relativeTime } from "./healthCheck.js";
 import {
   RECORDINGS_DIR,
   ensureRecordingsDir,
@@ -60,6 +61,7 @@ import {
   initials,
   persistUser,
   persistConnection,
+  persistConnectionHealth,
   persistGrant,
   createGrantRequest,
   resolveGrantRequest,
@@ -267,6 +269,26 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+// Replaces the old static, seeded status/latency/lastSeen fields with a real
+// TCP connect attempt against each host's own hostname:port — the same
+// technique probeGuacd() already uses for the guacd relay itself. Runs for
+// every mapped connection, live deployment or demo: a demo host pointed at
+// a fictional address will honestly show offline, exactly as a real one
+// that's actually down would.
+async function checkConnectionHealth(conn) {
+  const { reachable, latencyMs } = await probeHost(conn.hostname, conn.port);
+  conn.status = classifyStatus(reachable, latencyMs);
+  conn.latencyMs = latencyMs;
+  if (reachable) conn.lastSeenAt = new Date().toISOString();
+  conn.lastSeen = relativeTime(conn.lastSeenAt);
+  persistConnectionHealth(conn);
+  return conn;
+}
+
+async function runHealthChecks() {
+  await Promise.all(connections.map((conn) => checkConnectionHealth(conn).catch(() => null)));
+}
+
 function finishLogin(res, user) {
   logActivity(user.displayName, "Signed in", user.provider === "local" ? "Auth" : user.provider, "auth");
   return res.json({
@@ -276,6 +298,16 @@ function finishLogin(res, user) {
 }
 
 setInterval(tickIdle, IDLE_CHECK_MS);
+
+const HEALTH_CHECK_MS = Number(process.env.HELIX_HEALTH_CHECK_MS || 20000);
+setInterval(() => {
+  runHealthChecks().catch((err) => console.error("[helix] health check sweep failed:", err.message));
+}, HEALTH_CHECK_MS);
+// Kick off an initial sweep shortly after boot rather than waiting a full
+// interval, so status/latency reflect reality as soon as the UI loads.
+setTimeout(() => {
+  runHealthChecks().catch((err) => console.error("[helix] health check sweep failed:", err.message));
+}, 1500);
 
 app.get("/api/health", async (_req, res) => {
   const guacd = await probeGuacd();
@@ -637,6 +669,13 @@ app.get("/api/connections/:id", auth, (req, res) => {
   const conn = connections.find((c) => c.id === req.params.id);
   if (!conn) return res.status(404).json({ error: "Connection not found" });
   res.json({ ...publicConnection(conn), access: evaluateAccess(req.user, conn) });
+});
+
+app.post("/api/connections/:id/check", auth, requireAdmin, async (req, res) => {
+  const conn = connections.find((c) => c.id === req.params.id);
+  if (!conn) return res.status(404).json({ error: "Connection not found" });
+  await checkConnectionHealth(conn);
+  res.json(publicConnection(conn));
 });
 
 app.get("/api/activity", auth, (req, res) => {
