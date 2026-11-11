@@ -21,6 +21,7 @@ import {
 import QRCode from "qrcode";
 import { JWT_SECRET, CORS_ORIGINS, IS_PRODUCTION } from "./config.js";
 import { probeHost, classifyStatus, relativeTime } from "./healthCheck.js";
+import { notify, emailConfigured, slackConfigured, sendEmail, sendSlack } from "./notifications.js";
 import {
   RECORDINGS_DIR,
   ensureRecordingsDir,
@@ -285,6 +286,7 @@ function requireAdmin(req, res, next) {
 const LATENCY_HISTORY_LIMIT = 50;
 
 async function checkConnectionHealth(conn) {
+  const previousStatus = conn.status;
   const { reachable, latencyMs } = await probeHost(conn.hostname, conn.port);
   conn.status = classifyStatus(reachable, latencyMs);
   conn.latencyMs = latencyMs;
@@ -297,6 +299,16 @@ async function checkConnectionHealth(conn) {
   if (!conn.latencyHistory) conn.latencyHistory = [];
   conn.latencyHistory.push({ at: new Date().toISOString(), latencyMs, status: conn.status });
   if (conn.latencyHistory.length > LATENCY_HISTORY_LIMIT) conn.latencyHistory.shift();
+  // Alert on the transition, not on every tick a host stays down — otherwise
+  // a host that's been offline for a day would re-page the ops channel
+  // every 20 seconds.
+  if (previousStatus !== "offline" && conn.status === "offline") {
+    notify({ slack: `:red_circle: ${conn.name} (${conn.hostname}) just went offline.` });
+    logActivity("System", "Host went offline", conn.name, "system");
+  } else if (previousStatus === "offline" && conn.status !== "offline") {
+    notify({ slack: `:large_green_circle: ${conn.name} (${conn.hostname}) is back ${conn.status}.` });
+    logActivity("System", "Host back online", conn.name, "system");
+  }
   return conn;
 }
 
@@ -517,6 +529,15 @@ app.patch("/api/users/:id", auth, requireAdmin, (req, res) => {
     user.totpPendingSecret = null;
     user.totpEnabled = false;
     logActivity(req.user.displayName, "Reset MFA", user.username, "admin");
+    if (user.email) {
+      notify({
+        email: {
+          to: user.email,
+          subject: "Helix Remote: two-factor authentication was reset",
+          text: `${req.user.displayName} reset two-factor authentication on your account. If this wasn't expected, contact your administrator.`
+        }
+      });
+    }
   }
   persistUser(user);
   logActivity(req.user.displayName, "Updated user", user.username, "admin");
@@ -588,6 +609,11 @@ app.post("/api/grant-requests", auth, (req, res) => {
   if (access.allowed) return res.status(409).json({ error: "You already have access to this host" });
   const request = createGrantRequest({ user: req.user, conn, reason: body.reason });
   logActivity(req.user.displayName, "Requested access", conn.name, "grant");
+  const text = `${req.user.displayName} (${req.user.username}) requested access to ${conn.name}${body.reason ? `: "${body.reason}"` : ""}.`;
+  for (const admin of directory.filter((u) => u.role === "admin" && u.email)) {
+    notify({ email: { to: admin.email, subject: "Helix Remote: new access request", text } });
+  }
+  notify({ slack: text });
   res.status(201).json(requestGrantView(request));
 });
 
@@ -609,6 +635,15 @@ app.post("/api/grant-requests/:id/approve", auth, requireAdmin, (req, res) => {
   });
   resolveGrantRequest(request, "approved", req.user.displayName);
   logActivity(req.user.displayName, "Approved access request", `${user.username} · ${conn.name}`, "grant");
+  if (user.email) {
+    notify({
+      email: {
+        to: user.email,
+        subject: "Helix Remote: access request approved",
+        text: `${req.user.displayName} approved your request for ${conn.name}. Access is granted for ${hours} hour(s).`
+      }
+    });
+  }
   res.json({ request: requestGrantView(request), grant: grantView(grant) });
 });
 
@@ -618,6 +653,16 @@ app.post("/api/grant-requests/:id/deny", auth, requireAdmin, (req, res) => {
   if (request.status !== "pending") return res.status(409).json({ error: "Request already resolved" });
   resolveGrantRequest(request, "denied", req.user.displayName);
   logActivity(req.user.displayName, "Denied access request", `${request.username} · ${request.connectionName}`, "grant");
+  const requester = directory.find((u) => u.id === request.userId);
+  if (requester?.email) {
+    notify({
+      email: {
+        to: requester.email,
+        subject: "Helix Remote: access request denied",
+        text: `${req.user.displayName} denied your request for ${request.connectionName}.`
+      }
+    });
+  }
   res.json(requestGrantView(request));
 });
 
@@ -790,6 +835,23 @@ app.get("/api/usage", auth, requireAdmin, (req, res) => {
       history: (c.latencyHistory || []).map((h) => h.latencyMs)
     }))
   });
+});
+
+app.get("/api/notifications/status", auth, requireAdmin, (_req, res) => {
+  res.json({ email: emailConfigured(), slack: slackConfigured() });
+});
+
+app.post("/api/notifications/test", auth, requireAdmin, async (req, res) => {
+  const me = directory.find((u) => u.id === req.user.sub);
+  const [emailResult, slackResult] = await Promise.all([
+    sendEmail({
+      to: me?.email || req.body?.to,
+      subject: "Helix Remote: test notification",
+      text: `This is a test notification, sent by ${req.user.displayName}.`
+    }),
+    sendSlack(`:bell: Test notification from Helix Remote, sent by ${req.user.displayName}.`)
+  ]);
+  res.json({ email: emailResult, slack: slackResult });
 });
 
 app.get("/api/stats", auth, async (_req, res) => {

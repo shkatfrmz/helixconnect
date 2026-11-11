@@ -67,6 +67,16 @@ With `DATABASE_URL` unset, the app behaves exactly as before: in-memory, demo-fr
 - User passwords are always hashed with bcrypt, whether persisted or in-memory.
 - Session recordings themselves are `.guac` files on disk (`HELIX_RECORDINGS_DIR`, default `backend/recordings/`) — only their metadata (who, which host, when, size) lives in Postgres/memory. Deleting a recording from the admin UI removes both.
 - Live sessions, WebSocket rooms, and share codes stay in-memory — a socket only means something to the process holding it, so this state is rebuilt on reconnect rather than restored across a restart.
+- `session_history` records a durable log of every session (host, protocol, user, duration, end reason) that backs the admin Usage dashboard, separate from the capped `activity` feed.
+
+## Notifications
+
+Email and Slack notifications are both optional and independently configured — unset either and that channel is silently disabled (no startup failure, same pattern as the SSO providers below). When configured:
+
+- **Email** (`HELIX_SMTP_HOST` and friends) notifies admins of new access requests, notifies the requester when a request is approved or denied, and notifies a user when their MFA is reset by an admin.
+- **Slack** (`HELIX_SLACK_WEBHOOK_URL`, an incoming webhook) posts new access requests and host up/down transitions.
+
+Admins can see which channels are configured and send a test notification from the Overview tab in Admin settings.
 
 ## Testing
 

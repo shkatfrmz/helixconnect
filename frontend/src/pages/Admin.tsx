@@ -61,6 +61,9 @@ export default function Admin() {
   const [mfaCode, setMfaCode] = useState("");
   const [mfaPassword, setMfaPassword] = useState("");
   const [mfaMsg, setMfaMsg] = useState("");
+  const [notifStatus, setNotifStatus] = useState<{ email: boolean; slack: boolean } | null>(null);
+  const [notifMsg, setNotifMsg] = useState("");
+  const [testingNotif, setTestingNotif] = useState(false);
   const [auditType, setAuditType] = useState("all");
   const [auditQ, setAuditQ] = useState("");
   const [recordings, setRecordings] = useState<Recording[]>([]);
@@ -78,6 +81,7 @@ export default function Admin() {
       api<GrantRequest[]>("/api/grant-requests").then(setRequests);
       api<Recording[]>("/api/recordings").then(setRecordings);
       api<Usage>("/api/usage?days=7").then(setUsage);
+      api<{ email: boolean; slack: boolean }>("/api/notifications/status").then(setNotifStatus);
     }
   }
 
@@ -148,6 +152,26 @@ export default function Admin() {
       refresh();
     } finally {
       setCheckingId(null);
+    }
+  }
+
+  async function sendTestNotification() {
+    setTestingNotif(true);
+    setNotifMsg("");
+    try {
+      const res = await api<{ email: { sent: boolean; reason?: string }; slack: { sent: boolean; reason?: string } }>(
+        "/api/notifications/test",
+        { method: "POST" }
+      );
+      const parts = [
+        `Email: ${res.email.sent ? "sent" : res.email.reason}`,
+        `Slack: ${res.slack.sent ? "sent" : res.slack.reason}`
+      ];
+      setNotifMsg(parts.join(" · "));
+    } catch (err) {
+      setNotifMsg(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setTestingNotif(false);
     }
   }
 
@@ -308,6 +332,30 @@ export default function Admin() {
             </li>
           </ol>
         </article>
+
+        {user?.role === "admin" && (
+          <article className="panel">
+            <h3>Notifications</h3>
+            <p className="muted">
+              Access requests, grant decisions, MFA resets, and host up/down events notify by email and Slack when
+              configured server-side.
+            </p>
+            <ul className="kv">
+              <li>
+                <span>Email</span>
+                <b>{notifStatus?.email ? "configured" : "off"}</b>
+              </li>
+              <li>
+                <span>Slack</span>
+                <b>{notifStatus?.slack ? "configured" : "off"}</b>
+              </li>
+            </ul>
+            <button type="button" className="ghost" onClick={sendTestNotification} disabled={testingNotif}>
+              {testingNotif ? "Sending…" : "Send test notification"}
+            </button>
+            {notifMsg && <p className="tiny">{notifMsg}</p>}
+          </article>
+        )}
 
         {user?.provider === "local" && (
           <article className="panel wide">
