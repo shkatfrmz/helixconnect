@@ -1022,8 +1022,18 @@ wss.on("connection", (ws, req) => {
   const connectionId = url.searchParams.get("connectionId") || "unknown";
   const conn = connections.find((c) => c.id === connectionId);
   const session = sessionId ? sessions.get(sessionId) : null;
+  // Viewers get their own session (see POST /api/join), linked to the host's
+  // session via parentId. Lifecycle events (idle/grant timeouts, "ended")
+  // are per-tab and still go to session.id as before. Chat, clipboard sync,
+  // and "viewer joined" style events are group-wide, so they go to the
+  // host's session id instead (parentId when this is a viewer, otherwise
+  // just session.id) — every viewer of the same host joins that room too.
+  const roomKey = session ? session.parentId || session.id : null;
 
-  if (session) joinRoom(session.id, ws);
+  if (session) {
+    joinRoom(session.id, ws);
+    if (roomKey !== session.id) joinRoom(roomKey, ws);
+  }
 
   ws.send(
     JSON.stringify({
@@ -1060,8 +1070,19 @@ wss.on("connection", (ws, req) => {
     try {
       const msg = JSON.parse(raw.toString());
       if (msg.type === "heartbeat" && session) touchSession(session);
-      if (msg.type === "clipboard" && session) {
-        roomBroadcast(session.id, { type: "clipboard", text: msg.text, from: session.username });
+      if (msg.type === "clipboard" && session && roomKey) {
+        roomBroadcast(roomKey, { type: "clipboard", text: msg.text, from: session.username });
+      }
+      if (msg.type === "chat" && session && roomKey && typeof msg.text === "string") {
+        const text = msg.text.trim().slice(0, 2000);
+        if (text) {
+          roomBroadcast(roomKey, {
+            type: "chat",
+            from: session.displayName || session.username,
+            text,
+            at: new Date().toISOString()
+          });
+        }
       }
     } catch {
       /* ignore */
@@ -1070,7 +1091,10 @@ wss.on("connection", (ws, req) => {
 
   ws.on("close", () => {
     clearInterval(interval);
-    if (session) leaveRoom(session.id, ws);
+    if (session) {
+      leaveRoom(session.id, ws);
+      if (roomKey !== session.id) leaveRoom(roomKey, ws);
+    }
   });
 });
 

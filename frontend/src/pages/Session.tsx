@@ -4,6 +4,7 @@ import { api, Connection, Session as SessionT } from "../api";
 import DisplayStage from "../components/DisplayStage";
 
 type Tick = { cpu: number; mem: number; fps: number; idleRemainingMs?: number | null };
+type ChatMessage = { from: string; text: string; at: string };
 
 const PROTO_LABEL: Record<string, string> = { rdp: "RDP", vnc: "VNC", ssh: "SSH", telnet: "TELNET", kubernetes: "K8S" };
 
@@ -30,6 +31,9 @@ export default function Session() {
   const [osk, setOsk] = useState(false);
   const [tunnelState, setTunnelState] = useState("idle");
   const [shareMsg, setShareMsg] = useState("");
+  const [chat, setChat] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const chatLogRef = useRef<HTMLDivElement>(null);
   const [idleMs, setIdleMs] = useState<number | null>(null);
   const [reconnectNonce, setReconnectNonce] = useState(0);
   const [injectKey, setInjectKey] = useState<{ keysym: number; pressed: boolean; n: number } | null>(null);
@@ -97,6 +101,7 @@ export default function Session() {
     if (sid) qs.set("sessionId", sid);
     const ws = new WebSocket(`${proto}://${location.host}/ws/demo?${qs.toString()}`);
     wsRef.current = ws;
+    setChat([]);
     ws.onmessage = (ev) => {
       const msg = JSON.parse(ev.data);
       if (msg.type === "tick") {
@@ -116,6 +121,9 @@ export default function Session() {
       if (msg.type === "idle-warn") setTunnelState("idle warning");
       if (msg.type === "grant-warn") setTunnelState("grant ending");
       if (msg.type === "reconnected") setSession(msg.session);
+      if (msg.type === "chat" && typeof msg.text === "string") {
+        setChat((prev) => [...prev, { from: msg.from, text: msg.text, at: msg.at }].slice(-200));
+      }
     };
     const beat = setInterval(() => {
       if (ws.readyState === 1) ws.send(JSON.stringify({ type: "heartbeat" }));
@@ -218,6 +226,18 @@ export default function Session() {
       window.clearInterval(beat);
     };
   }, [autoClip]);
+
+  useEffect(() => {
+    const el = chatLogRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [chat]);
+
+  function sendChatMessage() {
+    const text = chatInput.trim();
+    if (!text || wsRef.current?.readyState !== 1) return;
+    wsRef.current.send(JSON.stringify({ type: "chat", text }));
+    setChatInput("");
+  }
 
   function oskPress(label: string, keysym: number) {
     setKeys((k) => [label, ...k].slice(0, 8));
@@ -372,6 +392,34 @@ export default function Session() {
             {shareMsg && <p className="tiny">{shareMsg}</p>}
             {session?.viewers?.length ? <p className="tiny">Viewers: {session.viewers.join(", ")}</p> : null}
           </section>
+          {(session?.shareCode || session?.parentId) && (
+            <section>
+              <h4>Chat</h4>
+              <p className="muted">Visible to the host and everyone watching this shared session.</p>
+              <div className="chat-log" ref={chatLogRef}>
+                {chat.length === 0 && <p className="tiny muted">No messages yet.</p>}
+                {chat.map((m, i) => (
+                  <p key={i} className="chat-msg">
+                    <b>{m.from}</b>
+                    <span>{m.text}</span>
+                  </p>
+                ))}
+              </div>
+              <div className="chat-input-row">
+                <input
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") sendChatMessage();
+                  }}
+                  placeholder="Message everyone watching…"
+                />
+                <button className="ghost" onClick={sendChatMessage} disabled={!chatInput.trim()}>
+                  Send
+                </button>
+              </div>
+            </section>
+          )}
           <section>
             <h4>Clipboard</h4>
             <p className="muted">Syncs text between this browser and the remote session.</p>

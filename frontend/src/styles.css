@@ -603,6 +603,34 @@ select:focus { outline: none; border-color: var(--accent); }
   font-size: 12px;
   border-radius: 4px;
 }
+.chat-log {
+  display: grid;
+  gap: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+  margin: 10px 0;
+  padding-right: 4px;
+}
+.chat-msg {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+.chat-msg b { color: var(--accent-2); margin-right: 6px; }
+.chat-msg span { color: var(--soft-ink); }
+.chat-input-row { display: flex; gap: 8px; }
+.chat-input-row input {
+  flex: 1;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--ink);
+  font-size: 13px;
+}
+.chat-input-row button { margin-top: 0; white-space: nowrap; }
+
 .kv { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
 .kv li { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
 .kv li:last-child { border-bottom: 0; padding-bottom: 0; }
