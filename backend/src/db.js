@@ -29,8 +29,8 @@ export async function loadUsers() {
 
 export async function saveUser(user) {
   await pool.query(
-    `INSERT INTO users (id, username, password_hash, display_name, role, avatar, email, provider, disabled, favorites)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+    `INSERT INTO users (id, username, password_hash, display_name, role, avatar, email, provider, disabled, favorites, totp_secret_encrypted, totp_pending_encrypted, totp_enabled)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
      ON CONFLICT (id) DO UPDATE SET
        username = EXCLUDED.username,
        password_hash = EXCLUDED.password_hash,
@@ -40,8 +40,17 @@ export async function saveUser(user) {
        email = EXCLUDED.email,
        provider = EXCLUDED.provider,
        disabled = EXCLUDED.disabled,
-       favorites = EXCLUDED.favorites`,
-    [user.id, user.username, user.password || "", user.displayName, user.role, user.avatar, user.email || "", user.provider || "local", Boolean(user.disabled), JSON.stringify(user.favorites || [])]
+       favorites = EXCLUDED.favorites,
+       totp_secret_encrypted = EXCLUDED.totp_secret_encrypted,
+       totp_pending_encrypted = EXCLUDED.totp_pending_encrypted,
+       totp_enabled = EXCLUDED.totp_enabled`,
+    [
+      user.id, user.username, user.password || "", user.displayName, user.role, user.avatar, user.email || "",
+      user.provider || "local", Boolean(user.disabled), JSON.stringify(user.favorites || []),
+      user.totpSecret ? encryptSecret(user.totpSecret) : null,
+      user.totpPendingSecret ? encryptSecret(user.totpPendingSecret) : null,
+      Boolean(user.totpEnabled)
+    ]
   );
 }
 
@@ -56,7 +65,10 @@ function rowToUser(row) {
     email: row.email || "",
     provider: row.provider,
     disabled: row.disabled,
-    favorites: row.favorites || []
+    favorites: row.favorites || [],
+    totpSecret: row.totp_secret_encrypted ? decryptSecret(row.totp_secret_encrypted) : null,
+    totpPendingSecret: row.totp_pending_encrypted ? decryptSecret(row.totp_pending_encrypted) : null,
+    totpEnabled: row.totp_enabled
   };
 }
 

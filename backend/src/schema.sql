@@ -15,6 +15,9 @@ CREATE TABLE IF NOT EXISTS users (
   provider TEXT NOT NULL DEFAULT 'local',
   disabled BOOLEAN NOT NULL DEFAULT FALSE,
   favorites JSONB NOT NULL DEFAULT '[]',
+  totp_secret_encrypted TEXT,
+  totp_pending_encrypted TEXT,
+  totp_enabled BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -90,3 +93,6 @@ ALTER TABLE connections ADD COLUMN IF NOT EXISTS clipboard_enabled BOOLEAN NOT N
 ALTER TABLE connections ADD COLUMN IF NOT EXISTS file_transfer_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS favorites JSONB NOT NULL DEFAULT '[]';
 ALTER TABLE grants ADD COLUMN IF NOT EXISTS recurrence JSONB;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret_encrypted TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_pending_encrypted TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT FALSE;

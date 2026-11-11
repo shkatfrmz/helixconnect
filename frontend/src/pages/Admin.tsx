@@ -31,7 +31,7 @@ const TABS = ["Overview", "Users", "Access", "Hosts", "Audit"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function Admin() {
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const [tab, setTab] = useState<Tab>("Overview");
   const [health, setHealth] = useState<Health | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -54,6 +54,10 @@ export default function Admin() {
   const [recurDays, setRecurDays] = useState<number[]>([1, 2, 3, 4, 5]); // Mon-Fri
   const [recurStart, setRecurStart] = useState("09:00");
   const [recurEnd, setRecurEnd] = useState("17:00");
+  const [mfaSetup, setMfaSetup] = useState<{ secret: string; qrDataUrl: string } | null>(null);
+  const [mfaCode, setMfaCode] = useState("");
+  const [mfaPassword, setMfaPassword] = useState("");
+  const [mfaMsg, setMfaMsg] = useState("");
   const [auditType, setAuditType] = useState("all");
   const [auditQ, setAuditQ] = useState("");
 
@@ -113,7 +117,7 @@ export default function Admin() {
     }
   }
 
-  async function patchUser(id: string, body: Partial<User> & { password?: string }) {
+  async function patchUser(id: string, body: Partial<User> & { password?: string; resetMfa?: boolean }) {
     await api(`/api/users/${id}`, { method: "PATCH", body: JSON.stringify(body) });
     refresh();
   }
@@ -121,6 +125,43 @@ export default function Admin() {
   async function patchConnection(id: string, body: Partial<Connection>) {
     await api(`/api/connections/${id}`, { method: "PATCH", body: JSON.stringify(body) });
     refresh();
+  }
+
+  async function startMfaSetup() {
+    setMfaMsg("");
+    const res = await api<{ secret: string; qrDataUrl: string }>("/api/me/mfa/setup", { method: "POST" });
+    setMfaSetup(res);
+  }
+
+  async function confirmMfaSetup(e: FormEvent) {
+    e.preventDefault();
+    setMfaMsg("");
+    try {
+      await api("/api/me/mfa/verify", { method: "POST", body: JSON.stringify({ code: mfaCode }) });
+      setMfaSetup(null);
+      setMfaCode("");
+      setMfaMsg("Two-factor enabled");
+      refreshUser();
+    } catch (err) {
+      setMfaMsg(err instanceof Error ? err.message : "Incorrect code");
+    }
+  }
+
+  async function disableMfa(e: FormEvent) {
+    e.preventDefault();
+    setMfaMsg("");
+    try {
+      await api("/api/me/mfa/disable", { method: "POST", body: JSON.stringify({ password: mfaPassword }) });
+      setMfaPassword("");
+      setMfaMsg("Two-factor disabled");
+      refreshUser();
+    } catch (err) {
+      setMfaMsg(err instanceof Error ? err.message : "Incorrect password");
+    }
+  }
+
+  async function resetUserMfa(id: string) {
+    await patchUser(id, { resetMfa: true });
   }
 
   async function addGrant(e: FormEvent) {
@@ -243,6 +284,55 @@ export default function Admin() {
             </li>
           </ol>
         </article>
+
+        {user?.provider === "local" && (
+          <article className="panel wide">
+            <h3>Your security</h3>
+            {user.mfaEnabled ? (
+              <>
+                <p className="muted">Two-factor authentication is on for your account.</p>
+                <form className="host-form" onSubmit={disableMfa}>
+                  <input
+                    placeholder="Current password"
+                    type="password"
+                    value={mfaPassword}
+                    onChange={(e) => setMfaPassword(e.target.value)}
+                    required
+                  />
+                  <button type="submit" className="ghost">
+                    Disable two-factor
+                  </button>
+                </form>
+              </>
+            ) : mfaSetup ? (
+              <>
+                <p className="muted">Scan this with your authenticator app (Google Authenticator, 1Password, Authy…), then enter the 6-digit code to confirm.</p>
+                <img src={mfaSetup.qrDataUrl} alt="MFA QR code" width={180} height={180} style={{ borderRadius: 8 }} />
+                <p className="tiny">Can't scan? Enter manually: {mfaSetup.secret}</p>
+                <form className="host-form" onSubmit={confirmMfaSetup}>
+                  <input
+                    placeholder="6-digit code"
+                    value={mfaCode}
+                    onChange={(e) => setMfaCode(e.target.value)}
+                    inputMode="numeric"
+                    maxLength={6}
+                    required
+                  />
+                  <button type="submit">Confirm & enable</button>
+                  <button type="button" className="ghost" onClick={() => setMfaSetup(null)}>
+                    Cancel
+                  </button>
+                </form>
+              </>
+            ) : (
+              <>
+                <p className="muted">Add a second factor so signing in needs your password and your phone.</p>
+                <button onClick={startMfaSetup}>Enable two-factor</button>
+              </>
+            )}
+            {mfaMsg && <p className="tiny">{mfaMsg}</p>}
+          </article>
+        )}
       </div>
       )}
 
@@ -287,6 +377,7 @@ export default function Admin() {
                   <th>User</th>
                   <th>Role</th>
                   <th>Source</th>
+                  <th>MFA</th>
                   <th></th>
                 </tr>
               </thead>
@@ -311,7 +402,13 @@ export default function Admin() {
                       </select>
                     </td>
                     <td>{u.disabled ? "disabled" : u.provider || "local"}</td>
+                    <td className="tiny">{u.mfaEnabled ? "on" : "off"}</td>
                     <td className="row-actions">
+                      {u.mfaEnabled && (
+                        <button className="ghost" type="button" onClick={() => resetUserMfa(u.id)}>
+                          Reset MFA
+                        </button>
+                      )}
                       {u.id !== user.id && (
                         <button className="ghost" type="button" onClick={() => patchUser(u.id, { disabled: !u.disabled })}>
                           {u.disabled ? "Enable" : "Disable"}

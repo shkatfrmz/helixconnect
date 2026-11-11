@@ -1,10 +1,13 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { api, getToken, setToken, User } from "./api";
 
+type LoginResult = { mfaRequired: false } | { mfaRequired: true; challenge: string };
+
 type AuthCtx = {
   user: User | null;
   loading: boolean;
-  login: (username: string, password: string) => Promise<void>;
+  login: (username: string, password: string) => Promise<LoginResult>;
+  verifyMfa: (challenge: string, code: string) => Promise<void>;
   acceptToken: (token: string) => Promise<void>;
   logout: () => void;
   refreshUser: () => Promise<void>;
@@ -28,10 +31,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .finally(() => setLoading(false));
   }, []);
 
-  async function login(username: string, password: string) {
-    const res = await api<{ token: string; user: User }>("/api/login", {
+  async function login(username: string, password: string): Promise<LoginResult> {
+    const res = await api<{ token?: string; user?: User; mfaRequired?: boolean; challenge?: string }>("/api/login", {
       method: "POST",
       body: JSON.stringify({ username, password })
+    });
+    if (res.mfaRequired && res.challenge) {
+      return { mfaRequired: true, challenge: res.challenge };
+    }
+    setToken(res.token!);
+    setUser(res.user!);
+    return { mfaRequired: false };
+  }
+
+  async function verifyMfa(challenge: string, code: string) {
+    const res = await api<{ token: string; user: User }>("/api/login/verify", {
+      method: "POST",
+      body: JSON.stringify({ challenge, code })
     });
     setToken(res.token);
     setUser(res.user);
@@ -54,7 +70,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (me) setUser(me);
   }
 
-  return <Ctx.Provider value={{ user, loading, login, acceptToken, logout, refreshUser }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ user, loading, login, verifyMfa, acceptToken, logout, refreshUser }}>{children}</Ctx.Provider>;
 }
 
 export function useAuth() {

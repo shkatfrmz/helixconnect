@@ -4,7 +4,7 @@ import { useAuth } from "../auth";
 import { api, Health } from "../api";
 
 export default function Login() {
-  const { login, acceptToken, user } = useAuth();
+  const { login, verifyMfa, acceptToken, user } = useAuth();
   const nav = useNavigate();
   const [params, setParams] = useSearchParams();
   const [username, setUsername] = useState("admin");
@@ -12,6 +12,8 @@ export default function Login() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [health, setHealth] = useState<Health | null>(null);
+  const [mfaChallenge, setMfaChallenge] = useState("");
+  const [mfaCode, setMfaCode] = useState("");
 
   useEffect(() => {
     if (user) nav("/", { replace: true });
@@ -53,10 +55,28 @@ export default function Login() {
     setBusy(true);
     setError("");
     try {
-      await login(username, password);
-      nav("/");
+      const result = await login(username, password);
+      if (result.mfaRequired) {
+        setMfaChallenge(result.challenge);
+      } else {
+        nav("/");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onVerifyMfa(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await verifyMfa(mfaChallenge, mfaCode);
+      nav("/");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Incorrect code");
     } finally {
       setBusy(false);
     }
@@ -92,35 +112,67 @@ export default function Login() {
         </div>
       </aside>
       <main className="login-panel">
-        <form onSubmit={onSubmit} className="login-form">
-          <h2>Sign in</h2>
-          <p className="hint">Use admin / admin or operator / operator, or continue with SSO.</p>
-          <label>
-            Username
-            <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" autoFocus />
-          </label>
-          <label>
-            Password
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-            />
-          </label>
-          {error && <p className="form-error">{error}</p>}
-          <button type="submit" disabled={busy}>
-            {busy ? "Signing in…" : "Enter console"}
-          </button>
-          <div className="sso-row">
-            <button type="button" className="ghost" disabled={busy || !sso?.google} onClick={() => startSso("google")}>
-              {sso?.google ? "Continue with Google" : "Google not configured"}
+        {mfaChallenge ? (
+          <form onSubmit={onVerifyMfa} className="login-form">
+            <h2>Enter your code</h2>
+            <p className="hint">Open your authenticator app and enter the 6-digit code for Helix Remote.</p>
+            <label>
+              Code
+              <input
+                value={mfaCode}
+                onChange={(e) => setMfaCode(e.target.value)}
+                inputMode="numeric"
+                maxLength={6}
+                autoFocus
+              />
+            </label>
+            {error && <p className="form-error">{error}</p>}
+            <button type="submit" disabled={busy}>
+              {busy ? "Verifying…" : "Verify"}
             </button>
-            <button type="button" className="ghost" disabled={busy || !sso?.entra} onClick={() => startSso("entra")}>
-              {sso?.entra ? "Continue with Microsoft" : "Microsoft not configured"}
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                setMfaChallenge("");
+                setMfaCode("");
+                setError("");
+              }}
+            >
+              Back to sign in
             </button>
-          </div>
-        </form>
+          </form>
+        ) : (
+          <form onSubmit={onSubmit} className="login-form">
+            <h2>Sign in</h2>
+            <p className="hint">Use admin / admin or operator / operator, or continue with SSO.</p>
+            <label>
+              Username
+              <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" autoFocus />
+            </label>
+            <label>
+              Password
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+              />
+            </label>
+            {error && <p className="form-error">{error}</p>}
+            <button type="submit" disabled={busy}>
+              {busy ? "Signing in…" : "Enter console"}
+            </button>
+            <div className="sso-row">
+              <button type="button" className="ghost" disabled={busy || !sso?.google} onClick={() => startSso("google")}>
+                {sso?.google ? "Continue with Google" : "Google not configured"}
+              </button>
+              <button type="button" className="ghost" disabled={busy || !sso?.entra} onClick={() => startSso("entra")}>
+                {sso?.entra ? "Continue with Microsoft" : "Microsoft not configured"}
+              </button>
+            </div>
+          </form>
+        )}
       </main>
     </div>
   );

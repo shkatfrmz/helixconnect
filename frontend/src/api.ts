@@ -39,6 +39,7 @@ export type User = {
   provider?: string;
   disabled?: boolean;
   favorites?: string[];
+  mfaEnabled?: boolean;
 };
 
 export type Access = {

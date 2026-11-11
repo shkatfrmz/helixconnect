@@ -8,7 +8,17 @@ import { WebSocketServer } from "ws";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
-import { CRYPTO_CYPHER, CRYPTO_KEY, encryptToken, hashPassword, verifyPassword } from "./crypto.js";
+import {
+  CRYPTO_CYPHER,
+  CRYPTO_KEY,
+  encryptToken,
+  hashPassword,
+  verifyPassword,
+  generateTotpSecret,
+  verifyTotp,
+  totpAuthUrl
+} from "./crypto.js";
+import QRCode from "qrcode";
 import { JWT_SECRET, CORS_ORIGINS, IS_PRODUCTION } from "./config.js";
 import {
   directory,
@@ -246,6 +256,30 @@ app.post("/api/login", loginLimiter, (req, res) => {
     logActivity(user.displayName, "Login blocked (disabled)", "Auth", "auth");
     return res.status(403).json({ error: "Account disabled" });
   }
+  if (user.totpEnabled) {
+    // Password verified but a second factor is required — issue a short-lived
+    // challenge token naming this user rather than a full session token.
+    const challenge = jwt.sign({ mfaFor: user.id }, JWT_SECRET, { expiresIn: "5m" });
+    return res.json({ mfaRequired: true, challenge });
+  }
+  return finishLogin(res, user);
+});
+
+app.post("/api/login/verify", loginLimiter, (req, res) => {
+  const { challenge, code } = req.body || {};
+  let payload;
+  try {
+    payload = jwt.verify(String(challenge || ""), JWT_SECRET);
+  } catch {
+    return res.status(401).json({ error: "Login challenge expired — sign in again" });
+  }
+  if (!payload.mfaFor) return res.status(401).json({ error: "Invalid challenge" });
+  const user = directory.find((u) => u.id === payload.mfaFor);
+  if (!user || !user.totpEnabled || !user.totpSecret) return res.status(401).json({ error: "Invalid challenge" });
+  if (!verifyTotp(user.totpSecret, code)) {
+    logActivity(user.displayName, "Failed MFA code", "Auth", "auth");
+    return res.status(401).json({ error: "Incorrect code" });
+  }
   return finishLogin(res, user);
 });
 
@@ -298,6 +332,49 @@ app.post("/api/me/favorites/:connectionId", auth, (req, res) => {
   res.json({ favorites: user.favorites });
 });
 
+app.post("/api/me/mfa/setup", auth, async (req, res) => {
+  const user = directory.find((u) => u.id === req.user.sub);
+  if (!user) return res.status(404).json({ error: "Not found" });
+  if (user.provider !== "local") {
+    return res.status(409).json({ error: "MFA applies to local accounts only — SSO already has its own second factor" });
+  }
+  const secret = generateTotpSecret();
+  user.totpPendingSecret = secret;
+  persistUser(user);
+  const otpauth = totpAuthUrl(secret, user.username);
+  const qrDataUrl = await QRCode.toDataURL(otpauth);
+  res.json({ secret, otpauth, qrDataUrl });
+});
+
+app.post("/api/me/mfa/verify", auth, (req, res) => {
+  const user = directory.find((u) => u.id === req.user.sub);
+  if (!user) return res.status(404).json({ error: "Not found" });
+  if (!user.totpPendingSecret) return res.status(409).json({ error: "No MFA setup in progress — start setup first" });
+  if (!verifyTotp(user.totpPendingSecret, req.body?.code)) {
+    return res.status(401).json({ error: "Incorrect code" });
+  }
+  user.totpSecret = user.totpPendingSecret;
+  user.totpPendingSecret = null;
+  user.totpEnabled = true;
+  persistUser(user);
+  logActivity(user.displayName, "Enabled MFA", "Auth", "auth");
+  res.json({ mfaEnabled: true });
+});
+
+app.post("/api/me/mfa/disable", auth, (req, res) => {
+  const user = directory.find((u) => u.id === req.user.sub);
+  if (!user) return res.status(404).json({ error: "Not found" });
+  if (!verifyPassword(req.body?.password, user.password)) {
+    return res.status(401).json({ error: "Incorrect password" });
+  }
+  user.totpSecret = null;
+  user.totpPendingSecret = null;
+  user.totpEnabled = false;
+  persistUser(user);
+  logActivity(user.displayName, "Disabled MFA", "Auth", "auth");
+  res.json({ mfaEnabled: false });
+});
+
 app.get("/api/users", auth, requireAdmin, (_req, res) => {
   res.json(directory.map(publicUser));
 });
@@ -332,6 +409,12 @@ app.patch("/api/users/:id", auth, requireAdmin, (req, res) => {
   if (body.role === "admin" || body.role === "operator") user.role = body.role;
   if (body.password) user.password = hashPassword(body.password);
   if (body.disabled !== undefined) user.disabled = Boolean(body.disabled);
+  if (body.resetMfa) {
+    user.totpSecret = null;
+    user.totpPendingSecret = null;
+    user.totpEnabled = false;
+    logActivity(req.user.displayName, "Reset MFA", user.username, "admin");
+  }
   persistUser(user);
   logActivity(req.user.displayName, "Updated user", user.username, "admin");
   res.json(publicUser(user));

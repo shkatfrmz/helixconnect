@@ -139,7 +139,8 @@ export function publicUser(user) {
     email: user.email || "",
     provider: user.provider || "local",
     disabled: Boolean(user.disabled),
-    favorites: user.favorites || []
+    favorites: user.favorites || [],
+    mfaEnabled: Boolean(user.totpEnabled)
   };
 }
 
