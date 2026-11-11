@@ -37,7 +37,7 @@ export default function Admin() {
   const [userForm, setUserForm] = useState({ username: "", password: "", displayName: "", email: "", role: "operator" });
   const [grantForm, setGrantForm] = useState({
     userId: "",
-    connectionId: "",
+    target: "", // "" = all hosts, "conn:<id>" = one host, "group:<name>" = a whole group
     startsAt: localInput(new Date()),
     endsAt: localInput(new Date(Date.now() + 60 * 60 * 1000)),
     reason: ""
@@ -114,10 +114,14 @@ export default function Admin() {
     e.preventDefault();
     setMsg("");
     try {
+      const [kind, value] = grantForm.target.split(":");
       await api("/api/grants", {
         method: "POST",
         body: JSON.stringify({
-          ...grantForm,
+          userId: grantForm.userId,
+          connectionId: kind === "conn" ? value : undefined,
+          group: kind === "group" ? value : undefined,
+          reason: grantForm.reason,
           startsAt: new Date(grantForm.startsAt).toISOString(),
           endsAt: new Date(grantForm.endsAt).toISOString()
         })
@@ -144,6 +148,7 @@ export default function Admin() {
   }
 
   const operators = useMemo(() => users.filter((u) => !u.disabled), [users]);
+  const hostGroups = useMemo(() => [...new Set(connections.map((c) => c.group))], [connections]);
 
   return (
     <div className="page admin">
@@ -316,15 +321,24 @@ export default function Admin() {
                 ))}
               </select>
               <select
-                value={grantForm.connectionId}
-                onChange={(e) => setGrantForm({ ...grantForm, connectionId: e.target.value })}
+                value={grantForm.target}
+                onChange={(e) => setGrantForm({ ...grantForm, target: e.target.value })}
               >
                 <option value="">All hosts</option>
-                {connections.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
+                <optgroup label="Host groups">
+                  {hostGroups.map((g) => (
+                    <option key={g} value={`group:${g}`}>
+                      Group: {g}
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup label="Specific hosts">
+                  {connections.map((c) => (
+                    <option key={c.id} value={`conn:${c.id}`}>
+                      {c.name}
+                    </option>
+                  ))}
+                </optgroup>
               </select>
               <input
                 type="datetime-local"

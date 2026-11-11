@@ -74,6 +74,22 @@ test("createGrant rejects an end time at or before the start time", () => {
   );
 });
 
+test("a group-level grant covers every host in that group, not others", () => {
+  createGrant({
+    actor,
+    user: { id: operator.sub, username: operator.username },
+    group: "Finance",
+    startsAt: new Date(Date.now() - 1000).toISOString(),
+    endsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString()
+  });
+  const inGroup = evaluateAccess(operator, { id: "conn-finance-1", group: "Finance" });
+  assert.equal(inGroup.allowed, true);
+  assert.equal(inGroup.grant.connectionName, "Group: Finance");
+
+  const outOfGroup = evaluateAccess(operator, { id: "conn-engineering-1", group: "Engineering" });
+  assert.equal(outOfGroup.allowed, false);
+});
+
 test("a revoked grant no longer grants access", () => {
   const grant = createGrant({
     actor,

@@ -211,16 +211,23 @@ export function grantsForUser(userId) {
   return grants.filter((g) => g.userId === userId || g.userId === "*");
 }
 
-export function evaluateAccess(actor, connectionId) {
+export function evaluateAccess(actor, connectionOrId) {
   const role = actor.role;
   const userId = actor.sub || actor.id;
   if (role === "admin") {
     return { allowed: true, standing: true, grant: null, reason: null };
   }
+  // Accept either a bare connection id (legacy callers, tests) or the full
+  // connection object — the latter is needed to match group-level grants.
+  const connectionId = typeof connectionOrId === "string" ? connectionOrId : connectionOrId?.id;
+  const group = typeof connectionOrId === "object" && connectionOrId ? connectionOrId.group : null;
+  const groupKey = group ? `group:${group}` : null;
   // Default-deny: an operator needs an explicit grant (for this connection,
-  // or a "*" grant covering all hosts) to access a host. No grant at all
-  // means no access, not open access.
-  const relevant = grantsForUser(userId).filter((g) => g.connectionId === connectionId || g.connectionId === "*");
+  // for its group, or a "*" grant covering all hosts) to access a host. No
+  // grant at all means no access, not open access.
+  const relevant = grantsForUser(userId).filter(
+    (g) => g.connectionId === connectionId || g.connectionId === "*" || (groupKey && g.connectionId === groupKey)
+  );
   if (relevant.length === 0) {
     return { allowed: false, standing: false, grant: null, reason: "No grant for this host" };
   }
@@ -237,7 +244,7 @@ export function evaluateAccess(actor, connectionId) {
   return { allowed: false, standing: false, grant: null, reason: "No active grant for this host" };
 }
 
-export function createGrant({ actor, user, conn, startsAt, endsAt, reason }) {
+export function createGrant({ actor, user, conn, group, startsAt, endsAt, reason }) {
   const start = startsAt ? new Date(startsAt) : new Date();
   const end = endsAt ? new Date(endsAt) : new Date(start.getTime() + 60 * 60 * 1000);
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
@@ -245,12 +252,14 @@ export function createGrant({ actor, user, conn, startsAt, endsAt, reason }) {
     err.status = 400;
     throw err;
   }
+  const connectionId = conn ? conn.id : group ? `group:${group}` : "*";
+  const connectionName = conn ? conn.name : group ? `Group: ${group}` : "All hosts";
   const grant = {
     id: newId("grant"),
     userId: user.id,
     username: user.username,
-    connectionId: conn ? conn.id : "*",
-    connectionName: conn ? conn.name : "All hosts",
+    connectionId,
+    connectionName,
     startsAt: start.toISOString(),
     endsAt: end.toISOString(),
     reason: reason || "",

@@ -342,10 +342,13 @@ app.post("/api/grants", auth, requireAdmin, (req, res) => {
   const body = req.body || {};
   const user = directory.find((u) => u.id === body.userId || u.username === body.username);
   if (!user) return res.status(404).json({ error: "User not found" });
-  const conn = body.connectionId && body.connectionId !== "*"
+  // A grant targets exactly one of: a specific host, a whole host Group, or
+  // every host ("*" / nothing specified). body.group takes precedence if
+  // both are somehow sent, since the form only ever sends one.
+  const conn = !body.group && body.connectionId && body.connectionId !== "*"
     ? connections.find((c) => c.id === body.connectionId)
     : null;
-  if (body.connectionId && body.connectionId !== "*" && !conn) {
+  if (!body.group && body.connectionId && body.connectionId !== "*" && !conn) {
     return res.status(404).json({ error: "Connection not found" });
   }
   try {
@@ -353,6 +356,7 @@ app.post("/api/grants", auth, requireAdmin, (req, res) => {
       actor: req.user,
       user,
       conn,
+      group: body.group || null,
       startsAt: body.startsAt,
       endsAt: body.endsAt,
       reason: body.reason
@@ -382,7 +386,7 @@ app.post("/api/grants/:id/revoke", auth, requireAdmin, (req, res) => {
 app.get("/api/connections", auth, (req, res) => {
   res.json(
     connections.map((conn) => {
-      const access = evaluateAccess(req.user, conn.id);
+      const access = evaluateAccess(req.user, conn);
       return { ...publicConnection(conn), access };
     })
   );
@@ -448,7 +452,7 @@ app.patch("/api/connections/:id", auth, (req, res) => {
 app.get("/api/connections/:id", auth, (req, res) => {
   const conn = connections.find((c) => c.id === req.params.id);
   if (!conn) return res.status(404).json({ error: "Connection not found" });
-  res.json({ ...publicConnection(conn), access: evaluateAccess(req.user, conn.id) });
+  res.json({ ...publicConnection(conn), access: evaluateAccess(req.user, conn) });
 });
 
 app.get("/api/activity", auth, (req, res) => {
@@ -485,7 +489,7 @@ app.post("/api/sessions", auth, async (req, res) => {
   const conn = connections.find((c) => c.id === connectionId);
   if (!conn) return res.status(404).json({ error: "Connection not found" });
   if (conn.status === "offline") return res.status(409).json({ error: "Host is offline" });
-  const access = evaluateAccess(req.user, conn.id);
+  const access = evaluateAccess(req.user, conn);
   if (!access.allowed) return res.status(403).json({ error: access.reason || "Access denied" });
   const guacd = await probeGuacd();
   const session = createSession({
