@@ -57,6 +57,20 @@ CREATE TABLE IF NOT EXISTS grants (
   recurrence JSONB
 );
 
+CREATE TABLE IF NOT EXISTS grant_requests (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  username TEXT NOT NULL,
+  display_name TEXT,
+  connection_id TEXT NOT NULL,
+  connection_name TEXT NOT NULL,
+  reason TEXT DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  resolved_at TIMESTAMPTZ,
+  resolved_by TEXT
+);
+
 CREATE TABLE IF NOT EXISTS activity (
   id TEXT PRIMARY KEY,
   user_name TEXT,

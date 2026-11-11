@@ -122,6 +122,20 @@ export type Stats = {
   sso?: { google: boolean; entra: boolean };
 };
 
+export type GrantRequest = {
+  id: string;
+  userId: string;
+  username: string;
+  displayName: string;
+  connectionId: string;
+  connectionName: string;
+  reason: string;
+  status: "pending" | "approved" | "denied";
+  createdAt: string;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+};
+
 export type Activity = {
   id: string;
   user: string;

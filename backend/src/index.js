@@ -15,6 +15,7 @@ import {
   connections,
   activity,
   grants,
+  grantRequests,
   sessions,
   publicConnection,
   publicUser,
@@ -38,7 +39,10 @@ import {
   initials,
   persistUser,
   persistConnection,
-  persistGrant
+  persistGrant,
+  createGrantRequest,
+  resolveGrantRequest,
+  requestGrantView
 } from "./store.js";
 import { authorizeUrl, exchangeCode, publicOrigin, publicSsoStatus } from "./oidc.js";
 
@@ -382,6 +386,52 @@ app.post("/api/grants/:id/revoke", auth, requireAdmin, (req, res) => {
   }
   logActivity(req.user.displayName, "Revoked grant", grant.username, "grant");
   res.json(grantView(grant));
+});
+
+app.get("/api/grant-requests", auth, (req, res) => {
+  const list = req.user.role === "admin" ? grantRequests : grantRequests.filter((r) => r.userId === req.user.sub);
+  res.json(list.map(requestGrantView));
+});
+
+app.post("/api/grant-requests", auth, (req, res) => {
+  const body = req.body || {};
+  const conn = connections.find((c) => c.id === body.connectionId);
+  if (!conn) return res.status(404).json({ error: "Connection not found" });
+  const access = evaluateAccess(req.user, conn);
+  if (access.allowed) return res.status(409).json({ error: "You already have access to this host" });
+  const request = createGrantRequest({ user: req.user, conn, reason: body.reason });
+  logActivity(req.user.displayName, "Requested access", conn.name, "grant");
+  res.status(201).json(requestGrantView(request));
+});
+
+app.post("/api/grant-requests/:id/approve", auth, requireAdmin, (req, res) => {
+  const request = grantRequests.find((r) => r.id === req.params.id);
+  if (!request) return res.status(404).json({ error: "Request not found" });
+  if (request.status !== "pending") return res.status(409).json({ error: "Request already resolved" });
+  const user = directory.find((u) => u.id === request.userId);
+  const conn = connections.find((c) => c.id === request.connectionId);
+  if (!user || !conn) return res.status(404).json({ error: "User or connection no longer exists" });
+  const hours = Number(req.body?.hours) || 8;
+  const grant = createGrant({
+    actor: req.user,
+    user,
+    conn,
+    startsAt: new Date().toISOString(),
+    endsAt: new Date(Date.now() + hours * 60 * 60 * 1000).toISOString(),
+    reason: request.reason || "Approved from self-service request"
+  });
+  resolveGrantRequest(request, "approved", req.user.displayName);
+  logActivity(req.user.displayName, "Approved access request", `${user.username} · ${conn.name}`, "grant");
+  res.json({ request: requestGrantView(request), grant: grantView(grant) });
+});
+
+app.post("/api/grant-requests/:id/deny", auth, requireAdmin, (req, res) => {
+  const request = grantRequests.find((r) => r.id === req.params.id);
+  if (!request) return res.status(404).json({ error: "Request not found" });
+  if (request.status !== "pending") return res.status(409).json({ error: "Request already resolved" });
+  resolveGrantRequest(request, "denied", req.user.displayName);
+  logActivity(req.user.displayName, "Denied access request", `${request.username} · ${request.connectionName}`, "grant");
+  res.json(requestGrantView(request));
 });
 
 app.get("/api/connections", auth, (req, res) => {

@@ -152,6 +152,38 @@ function rowToGrant(row) {
   };
 }
 
+// --- grant requests --------------------------------------------------------
+
+export async function loadGrantRequests() {
+  const { rows } = await pool.query("SELECT * FROM grant_requests ORDER BY created_at DESC");
+  return rows.map(rowToGrantRequest);
+}
+
+export async function saveGrantRequest(r) {
+  await pool.query(
+    `INSERT INTO grant_requests (id, user_id, username, display_name, connection_id, connection_name, reason, status, resolved_at, resolved_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+     ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, resolved_at = EXCLUDED.resolved_at, resolved_by = EXCLUDED.resolved_by`,
+    [r.id, r.userId, r.username, r.displayName || "", r.connectionId, r.connectionName, r.reason || "", r.status, r.resolvedAt || null, r.resolvedBy || null]
+  );
+}
+
+function rowToGrantRequest(row) {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    username: row.username,
+    displayName: row.display_name || "",
+    connectionId: row.connection_id,
+    connectionName: row.connection_name,
+    reason: row.reason || "",
+    status: row.status,
+    createdAt: row.created_at.toISOString(),
+    resolvedAt: row.resolved_at ? row.resolved_at.toISOString() : null,
+    resolvedBy: row.resolved_by || null
+  };
+}
+
 // --- activity --------------------------------------------------------------
 
 export async function loadActivity(limit = 80) {

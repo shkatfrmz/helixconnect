@@ -274,11 +274,16 @@ select:focus { outline: none; border-color: var(--accent); }
   cursor: not-allowed;
   filter: none;
 }
-.login-form button.ghost, .sso-row button.ghost {
+.login-form button.ghost, .sso-row button.ghost, .blade footer button.ghost {
   background: transparent;
   color: var(--ink);
   border: 1px solid var(--line);
   font-weight: 500;
+}
+.blade footer button.ghost:disabled {
+  opacity: 0.6;
+  color: var(--muted);
+  cursor: not-allowed;
 }
 .login-form button.ghost:hover:not(:disabled), .sso-row button.ghost:hover:not(:disabled) {
   border-color: var(--accent);

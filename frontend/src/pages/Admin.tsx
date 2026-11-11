@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { api, Activity, Connection, Grant, Health, Stats, User } from "../api";
+import { api, Activity, Connection, Grant, GrantRequest, Health, Stats, User } from "../api";
 import { useAuth } from "../auth";
 
 const emptyHost = {
@@ -39,6 +39,7 @@ export default function Admin() {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [grants, setGrants] = useState<Grant[]>([]);
+  const [requests, setRequests] = useState<GrantRequest[]>([]);
   const [form, setForm] = useState(emptyHost);
   const [msg, setMsg] = useState("");
   const [userForm, setUserForm] = useState({ username: "", password: "", displayName: "", email: "", role: "operator" });
@@ -63,6 +64,7 @@ export default function Admin() {
     if (user?.role === "admin") {
       api<User[]>("/api/users").then(setUsers);
       api<Grant[]>("/api/grants").then(setGrants);
+      api<GrantRequest[]>("/api/grant-requests").then(setRequests);
     }
   }
 
@@ -149,6 +151,16 @@ export default function Admin() {
 
   async function revokeGrant(id: string) {
     await api(`/api/grants/${id}/revoke`, { method: "POST" });
+    refresh();
+  }
+
+  async function approveRequest(id: string, hours: number) {
+    await api(`/api/grant-requests/${id}/approve`, { method: "POST", body: JSON.stringify({ hours }) });
+    refresh();
+  }
+
+  async function denyRequest(id: string) {
+    await api(`/api/grant-requests/${id}/deny`, { method: "POST" });
     refresh();
   }
 
@@ -317,6 +329,50 @@ export default function Admin() {
 
       {tab === "Access" && user?.role === "admin" && (
       <div className="admin-grid">
+        <article className="panel wide">
+          <h3>Access requests</h3>
+          <p className="muted">Operators can request access to a host they can't open yet. Approving creates an 8-hour grant by default.</p>
+          <table>
+            <thead>
+              <tr>
+                <th>Who</th>
+                <th>Host</th>
+                <th>Reason</th>
+                <th>When</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {requests.filter((r) => r.status === "pending").length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="muted">
+                    No pending requests.
+                  </td>
+                </tr>
+              ) : (
+                requests
+                  .filter((r) => r.status === "pending")
+                  .map((r) => (
+                    <tr key={r.id}>
+                      <td>{r.displayName}</td>
+                      <td>{r.connectionName}</td>
+                      <td className="tiny">{r.reason || "—"}</td>
+                      <td className="tiny">{new Date(r.createdAt).toLocaleString()}</td>
+                      <td className="row-actions">
+                        <button className="ghost" type="button" onClick={() => approveRequest(r.id, 8)}>
+                          Approve (8h)
+                        </button>
+                        <button className="ghost" type="button" onClick={() => denyRequest(r.id)}>
+                          Deny
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+              )}
+            </tbody>
+          </table>
+        </article>
+
         {user?.role === "admin" && (
           <article className="panel wide">
             <h3>Timed access</h3>

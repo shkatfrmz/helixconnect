@@ -34,6 +34,7 @@ export const activity = persistent
   ? await db.loadActivity()
   : [...seedActivity];
 export const grants = persistent ? await db.loadGrants() : [];
+export const grantRequests = persistent ? await db.loadGrantRequests() : [];
 export const sessions = new Map();
 export const rooms = new Map();
 
@@ -76,6 +77,56 @@ export function persistConnection(conn) {
 
 export function persistGrant(grant) {
   persist("grant", () => db.saveGrant(grant));
+}
+
+export function persistGrantRequest(request) {
+  persist("grant request", () => db.saveGrantRequest(request));
+}
+
+export function requestGrantView(r) {
+  return {
+    id: r.id,
+    userId: r.userId,
+    username: r.username,
+    displayName: r.displayName,
+    connectionId: r.connectionId,
+    connectionName: r.connectionName,
+    reason: r.reason || "",
+    status: r.status,
+    createdAt: r.createdAt,
+    resolvedAt: r.resolvedAt || null,
+    resolvedBy: r.resolvedBy || null
+  };
+}
+
+export function createGrantRequest({ user, conn, reason }) {
+  const existing = grantRequests.find(
+    (r) => r.userId === user.sub && r.connectionId === conn.id && r.status === "pending"
+  );
+  if (existing) return existing;
+  const request = {
+    id: newId("req"),
+    userId: user.sub,
+    username: user.username,
+    displayName: user.displayName || user.username,
+    connectionId: conn.id,
+    connectionName: conn.name,
+    reason: reason || "",
+    status: "pending",
+    createdAt: new Date().toISOString(),
+    resolvedAt: null,
+    resolvedBy: null
+  };
+  grantRequests.unshift(request);
+  persistGrantRequest(request);
+  return request;
+}
+
+export function resolveGrantRequest(request, status, actorName) {
+  request.status = status;
+  request.resolvedAt = new Date().toISOString();
+  request.resolvedBy = actorName;
+  persistGrantRequest(request);
 }
 
 export function publicUser(user) {

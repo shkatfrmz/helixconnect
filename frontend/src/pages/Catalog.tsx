@@ -22,12 +22,29 @@ export default function Catalog() {
   const [credUser, setCredUser] = useState("");
   const [credPass, setCredPass] = useState("");
   const [openError, setOpenError] = useState("");
+  const [requested, setRequested] = useState<Set<string>>(new Set());
+  const [requestMsg, setRequestMsg] = useState("");
   const nav = useNavigate();
 
   useEffect(() => {
     api<Connection[]>("/api/connections").then(setConnections);
     api<Stats>("/api/stats").then(setStats);
+    api<{ connectionId: string; status: string }[]>("/api/grant-requests")
+      .then((reqs) => setRequested(new Set(reqs.filter((r) => r.status === "pending").map((r) => r.connectionId))))
+      .catch(() => undefined);
   }, []);
+
+  async function requestAccess(e: MouseEvent, c: Connection) {
+    e.stopPropagation();
+    setRequestMsg("");
+    try {
+      await api(`/api/grant-requests`, { method: "POST", body: JSON.stringify({ connectionId: c.id }) });
+      setRequested((prev) => new Set(prev).add(c.id));
+      setRequestMsg(`Access requested for ${c.name}`);
+    } catch (err) {
+      setRequestMsg(err instanceof Error ? err.message : "Could not request access");
+    }
+  }
 
   const groups = useMemo(() => ["all", ...new Set(connections.map((c) => c.group))], [connections]);
   const favorites = useMemo(() => new Set(user?.favorites || []), [user?.favorites]);
@@ -106,6 +123,7 @@ export default function Catalog() {
           ))}
         </select>
       </div>
+      {requestMsg && <p className="tiny">{requestMsg}</p>}
 
       {filtered.length === 0 ? (
         <div className="empty-row">
@@ -163,12 +181,15 @@ export default function Catalog() {
                 </p>
               )}
               <footer>
-                <button
-                  disabled={c.status === "offline" || (c.access ? !c.access.allowed : false)}
-                  onClick={() => requestOpen(c)}
-                >
-                  {c.status === "offline" ? "Host down" : c.access && !c.access.allowed ? "No access" : "Open session"}
-                </button>
+                {c.access && !c.access.allowed && c.status !== "offline" ? (
+                  <button className="ghost" disabled={requested.has(c.id)} onClick={(e) => requestAccess(e, c)}>
+                    {requested.has(c.id) ? "Requested" : "Request access"}
+                  </button>
+                ) : (
+                  <button disabled={c.status === "offline"} onClick={() => requestOpen(c)}>
+                    {c.status === "offline" ? "Host down" : "Open session"}
+                  </button>
+                )}
                 <small>Last seen {c.lastSeen}</small>
               </footer>
             </article>
