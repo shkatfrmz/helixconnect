@@ -17,6 +17,12 @@ export default function Login() {
     if (user) nav("/", { replace: true });
   }, [user, nav]);
 
+  // The login screen's background photo and scrim were tuned for dark; a
+  // light theme chosen inside the console shouldn't leak out here.
+  useEffect(() => {
+    delete document.documentElement.dataset.theme;
+  }, []);
+
   useEffect(() => {
     api<Health>("/api/health").then(setHealth).catch(() => undefined);
   }, []);

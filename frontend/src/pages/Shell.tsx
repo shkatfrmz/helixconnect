@@ -1,10 +1,20 @@
+import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
 import { DatacenterArt } from "../components/DatacenterArt";
 
+const THEME_KEY = "helix.theme";
+
 export default function Shell() {
   const { user, logout } = useAuth();
   const nav = useNavigate();
+  const [theme, setTheme] = useState<"dark" | "light">(() => (localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark"));
+
+  useEffect(() => {
+    if (theme === "light") document.documentElement.dataset.theme = "light";
+    else delete document.documentElement.dataset.theme;
+    localStorage.setItem(THEME_KEY, theme);
+  }, [theme]);
 
   return (
     <div className="app-shell">
@@ -25,6 +35,14 @@ export default function Shell() {
           <NavLink to="/admin">Gateway</NavLink>
         </nav>
         <div className="who">
+          <button
+            className="ghost theme-toggle"
+            type="button"
+            title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+            onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+          >
+            {theme === "dark" ? "☀" : "☾"}
+          </button>
           <span className="avatar">{user?.avatar}</span>
           <div>
             <strong>{user?.displayName}</strong>
