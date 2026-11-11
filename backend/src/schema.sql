@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS connections (
   color_depth INTEGER DEFAULT 24,
   ignore_cert BOOLEAN NOT NULL DEFAULT FALSE,
   security TEXT,
+  clipboard_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  file_transfer_enabled BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -64,3 +66,9 @@ CREATE TABLE IF NOT EXISTS activity (
 
 CREATE INDEX IF NOT EXISTS idx_grants_user ON grants (user_id);
 CREATE INDEX IF NOT EXISTS idx_activity_created ON activity (created_at DESC);
+
+-- Additive migrations for deployments created before a column existed.
+-- CREATE TABLE IF NOT EXISTS above is a no-op against an existing table, so
+-- new columns need their own idempotent ADD COLUMN here.
+ALTER TABLE connections ADD COLUMN IF NOT EXISTS clipboard_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE connections ADD COLUMN IF NOT EXISTS file_transfer_enabled BOOLEAN NOT NULL DEFAULT FALSE;

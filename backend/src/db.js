@@ -68,20 +68,22 @@ export async function loadConnections() {
 export async function saveConnection(conn) {
   const encryptedPassword = conn.password ? encryptSecret(conn.password) : "";
   await pool.query(
-    `INSERT INTO connections (id, name, protocol, hostname, port, username, password_encrypted, tags, "group", status, latency_ms, last_seen, description, os, resolution, color_depth, ignore_cert, security)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+    `INSERT INTO connections (id, name, protocol, hostname, port, username, password_encrypted, tags, "group", status, latency_ms, last_seen, description, os, resolution, color_depth, ignore_cert, security, clipboard_enabled, file_transfer_enabled)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
      ON CONFLICT (id) DO UPDATE SET
        name = EXCLUDED.name, protocol = EXCLUDED.protocol, hostname = EXCLUDED.hostname,
        port = EXCLUDED.port, username = EXCLUDED.username, password_encrypted = EXCLUDED.password_encrypted,
        tags = EXCLUDED.tags, "group" = EXCLUDED."group", status = EXCLUDED.status,
        latency_ms = EXCLUDED.latency_ms, last_seen = EXCLUDED.last_seen, description = EXCLUDED.description,
        os = EXCLUDED.os, resolution = EXCLUDED.resolution, color_depth = EXCLUDED.color_depth,
-       ignore_cert = EXCLUDED.ignore_cert, security = EXCLUDED.security`,
+       ignore_cert = EXCLUDED.ignore_cert, security = EXCLUDED.security,
+       clipboard_enabled = EXCLUDED.clipboard_enabled, file_transfer_enabled = EXCLUDED.file_transfer_enabled`,
     [
       conn.id, conn.name, conn.protocol, conn.hostname, conn.port, conn.username || "", encryptedPassword,
       JSON.stringify(conn.tags || []), conn.group || "Unassigned", conn.status || "online", conn.latencyMs ?? null,
       conn.lastSeen || "Just now", conn.description || "", conn.os || "Unknown", conn.resolution || "1280x720",
-      conn.colorDepth || 24, Boolean(conn.ignoreCert), conn.security || null
+      conn.colorDepth || 24, Boolean(conn.ignoreCert), conn.security || null,
+      conn.clipboardEnabled !== false, Boolean(conn.fileTransferEnabled)
     ]
   );
 }
@@ -105,7 +107,9 @@ function rowToConnection(row) {
     resolution: row.resolution,
     colorDepth: row.color_depth,
     ignoreCert: row.ignore_cert,
-    security: row.security || undefined
+    security: row.security || undefined,
+    clipboardEnabled: row.clipboard_enabled,
+    fileTransferEnabled: row.file_transfer_enabled
   };
 }
 

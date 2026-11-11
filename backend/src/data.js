@@ -132,7 +132,10 @@ export const connections = [
     description: "Locked-down Windows desktop for ERP and reporting applications.",
     os: "Windows 10 LTSC",
     resolution: "1920x1080",
-    colorDepth: 32
+    colorDepth: 32,
+    // Locked-down finance box: no clipboard in/out, no file transfer.
+    clipboardEnabled: false,
+    fileTransferEnabled: false
   }
 ];
 

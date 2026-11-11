@@ -10,7 +10,9 @@ const emptyHost = {
   username: "",
   group: "Engineering",
   os: "",
-  description: ""
+  description: "",
+  clipboardEnabled: true,
+  fileTransferEnabled: false
 };
 
 function localInput(d: Date) {
@@ -100,6 +102,11 @@ export default function Admin() {
 
   async function patchUser(id: string, body: Partial<User> & { password?: string }) {
     await api(`/api/users/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+    refresh();
+  }
+
+  async function patchConnection(id: string, body: Partial<Connection>) {
+    await api(`/api/connections/${id}`, { method: "PATCH", body: JSON.stringify(body) });
     refresh();
   }
 
@@ -437,10 +444,74 @@ export default function Admin() {
                 value={form.description}
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
               />
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  checked={form.clipboardEnabled}
+                  onChange={(e) => setForm({ ...form, clipboardEnabled: e.target.checked })}
+                />
+                Clipboard sync allowed
+              </label>
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  checked={form.fileTransferEnabled}
+                  onChange={(e) => setForm({ ...form, fileTransferEnabled: e.target.checked })}
+                />
+                File transfer allowed (RDP/SSH only)
+              </label>
               <button type="submit">Map host</button>
             </form>
             {msg && <p className="tiny">{msg}</p>}
             <p className="tiny">{connections.length} hosts in catalog</p>
+          </article>
+        )}
+
+        {user?.role === "admin" && (
+          <article className="panel wide">
+            <h3>Hosts</h3>
+            <p className="muted">Per-host clipboard and file-transfer access. File transfer only applies to RDP and SSH.</p>
+            <table>
+              <thead>
+                <tr>
+                  <th>Host</th>
+                  <th>Protocol</th>
+                  <th>Clipboard</th>
+                  <th>File transfer</th>
+                </tr>
+              </thead>
+              <tbody>
+                {connections.map((c) => (
+                  <tr key={c.id}>
+                    <td>
+                      {c.name}
+                      <div className="tiny">{c.hostname}</div>
+                    </td>
+                    <td className="tiny">{c.protocol.toUpperCase()}</td>
+                    <td>
+                      <button
+                        className="ghost"
+                        type="button"
+                        onClick={() => patchConnection(c.id, { clipboardEnabled: !c.clipboardEnabled })}
+                      >
+                        {c.clipboardEnabled === false ? "Blocked" : "Allowed"}
+                      </button>
+                    </td>
+                    <td>
+                      <button
+                        className="ghost"
+                        type="button"
+                        disabled={c.protocol === "vnc"}
+                        title={c.protocol === "vnc" ? "VNC has no file-transfer channel" : ""}
+                        onClick={() => patchConnection(c.id, { fileTransferEnabled: !c.fileTransferEnabled })}
+                      >
+                        {c.protocol === "vnc" ? "N/A" : c.fileTransferEnabled ? "Allowed" : "Blocked"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </article>
         )}
       </div>

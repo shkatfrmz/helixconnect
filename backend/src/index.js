@@ -128,16 +128,34 @@ function guacamoleSettings(conn, extras = {}) {
     height: extras.height || 720,
     dpi: extras.dpi || 96
   };
+  // Clipboard defaults to on (matches the in-browser clipboard-sync panel);
+  // an admin can lock it down per host (e.g. the Finance desktop).
+  if (conn.clipboardEnabled === false) {
+    settings["disable-copy"] = true;
+    settings["disable-paste"] = true;
+  }
   if (conn.protocol === "rdp") {
     settings.security = conn.security || "any";
     settings["ignore-cert"] = conn.ignoreCert === true;
     settings["enable-wallpaper"] = false;
+    if (conn.fileTransferEnabled) {
+      settings["enable-drive"] = true;
+      settings["drive-path"] = `/tmp/helix-drives/${conn.id}`;
+      settings["create-drive-path"] = true;
+      settings["drive-name"] = "Helix Share";
+    }
   }
   if (conn.protocol === "ssh") {
     settings["color-scheme"] = "green-black";
     settings["font-name"] = "monospace";
     settings["font-size"] = "12";
+    if (conn.fileTransferEnabled) {
+      settings["enable-sftp"] = true;
+      settings["sftp-root-directory"] = "/";
+    }
   }
+  // VNC has no protocol-level file-transfer channel in guacd — the toggle
+  // is still stored per-connection but only takes effect for RDP/SSH.
   return settings;
 }
 
@@ -382,7 +400,12 @@ app.post("/api/connections", auth, (req, res) => {
     // Certificate validation defaults ON; an operator must opt out per-connection
     // rather than every RDP host silently trusting an unverified certificate.
     ignoreCert: Boolean(body.ignoreCert),
-    security: body.protocol === "rdp" ? "any" : undefined
+    security: body.protocol === "rdp" ? "any" : undefined,
+    // Clipboard defaults ON (matches existing behavior); file transfer
+    // defaults OFF — an admin opts a host in rather than every new RDP/SSH
+    // host silently exposing a drive/SFTP channel.
+    clipboardEnabled: body.clipboardEnabled !== false,
+    fileTransferEnabled: Boolean(body.fileTransferEnabled)
   };
   connections.push(conn);
   persistConnection(conn);
@@ -401,6 +424,8 @@ app.patch("/api/connections/:id", auth, (req, res) => {
   if (body.port !== undefined) conn.port = Number(body.port);
   if (body.tags) conn.tags = body.tags;
   if (body.ignoreCert !== undefined) conn.ignoreCert = Boolean(body.ignoreCert);
+  if (body.clipboardEnabled !== undefined) conn.clipboardEnabled = Boolean(body.clipboardEnabled);
+  if (body.fileTransferEnabled !== undefined) conn.fileTransferEnabled = Boolean(body.fileTransferEnabled);
   persistConnection(conn);
   logActivity(req.user.displayName, "Updated connection", conn.name, "admin");
   res.json(publicConnection(conn));

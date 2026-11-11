@@ -77,6 +77,8 @@ export type Connection = {
   os: string;
   resolution: string;
   colorDepth: number;
+  clipboardEnabled?: boolean;
+  fileTransferEnabled?: boolean;
   access?: Access;
 };
 

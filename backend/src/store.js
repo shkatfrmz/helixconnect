@@ -26,7 +26,9 @@ export const connections = persistent
       ...c,
       password: c.password || "",
       ignoreCert: c.ignoreCert ?? false,
-      security: c.protocol === "rdp" ? "any" : undefined
+      security: c.protocol === "rdp" ? "any" : undefined,
+      clipboardEnabled: c.clipboardEnabled ?? true,
+      fileTransferEnabled: c.fileTransferEnabled ?? false
     }));
 export const activity = persistent
   ? await db.loadActivity()
