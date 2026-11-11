@@ -124,10 +124,14 @@ export async function loadGrants() {
 
 export async function saveGrant(grant) {
   await pool.query(
-    `INSERT INTO grants (id, user_id, username, connection_id, connection_name, starts_at, ends_at, reason, created_by, revoked)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+    `INSERT INTO grants (id, user_id, username, connection_id, connection_name, starts_at, ends_at, reason, created_by, revoked, recurrence)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
      ON CONFLICT (id) DO UPDATE SET revoked = EXCLUDED.revoked`,
-    [grant.id, grant.userId, grant.username, grant.connectionId, grant.connectionName, grant.startsAt, grant.endsAt, grant.reason || "", grant.createdBy || "", Boolean(grant.revoked)]
+    [
+      grant.id, grant.userId, grant.username, grant.connectionId, grant.connectionName, grant.startsAt, grant.endsAt,
+      grant.reason || "", grant.createdBy || "", Boolean(grant.revoked),
+      grant.recurrence ? JSON.stringify(grant.recurrence) : null
+    ]
   );
 }
 
@@ -143,7 +147,8 @@ function rowToGrant(row) {
     reason: row.reason || "",
     createdBy: row.created_by,
     createdAt: row.created_at.toISOString(),
-    revoked: row.revoked
+    revoked: row.revoked,
+    recurrence: row.recurrence || null
   };
 }
 

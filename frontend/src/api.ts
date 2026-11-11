@@ -59,6 +59,7 @@ export type Grant = {
   reason: string;
   createdBy: string;
   createdAt: string;
+  recurrence?: { daysOfWeek: number[]; startMinutes: number; endMinutes: number } | null;
   status: "active" | "scheduled" | "expired" | "revoked";
 };
 

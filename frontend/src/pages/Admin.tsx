@@ -15,6 +15,13 @@ const emptyHost = {
   fileTransferEnabled: false
 };
 
+function toMinutes(hhmm: string) {
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + (m || 0);
+}
+
+const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
 function localInput(d: Date) {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -42,6 +49,10 @@ export default function Admin() {
     endsAt: localInput(new Date(Date.now() + 60 * 60 * 1000)),
     reason: ""
   });
+  const [recurring, setRecurring] = useState(false);
+  const [recurDays, setRecurDays] = useState<number[]>([1, 2, 3, 4, 5]); // Mon-Fri
+  const [recurStart, setRecurStart] = useState("09:00");
+  const [recurEnd, setRecurEnd] = useState("17:00");
   const [auditType, setAuditType] = useState("all");
   const [auditQ, setAuditQ] = useState("");
 
@@ -123,7 +134,10 @@ export default function Admin() {
           group: kind === "group" ? value : undefined,
           reason: grantForm.reason,
           startsAt: new Date(grantForm.startsAt).toISOString(),
-          endsAt: new Date(grantForm.endsAt).toISOString()
+          endsAt: new Date(grantForm.endsAt).toISOString(),
+          recurrence: recurring
+            ? { daysOfWeek: recurDays, startMinutes: toMinutes(recurStart), endMinutes: toMinutes(recurEnd) }
+            : null
         })
       });
       setMsg("Grant created");
@@ -355,6 +369,30 @@ export default function Admin() {
                 value={grantForm.reason}
                 onChange={(e) => setGrantForm({ ...grantForm, reason: e.target.value })}
               />
+              <label className="toggle recur-toggle">
+                <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} />
+                Recurring (only allow during these hours, on these days, within the window above)
+              </label>
+              {recurring && (
+                <div className="recur-row">
+                  <div className="chip-row">
+                    {DAY_LABELS.map((label, idx) => (
+                      <button
+                        key={label}
+                        type="button"
+                        className={`ghost ${recurDays.includes(idx) ? "day-on" : ""}`}
+                        onClick={() =>
+                          setRecurDays((days) => (days.includes(idx) ? days.filter((d) => d !== idx) : [...days, idx].sort()))
+                        }
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <input type="time" value={recurStart} onChange={(e) => setRecurStart(e.target.value)} />
+                  <input type="time" value={recurEnd} onChange={(e) => setRecurEnd(e.target.value)} />
+                </div>
+              )}
               <div className="chip-row">
                 <button type="button" className="ghost" onClick={() => setWindow(1)}>
                   1 hour
@@ -392,6 +430,15 @@ export default function Admin() {
                       <td>{g.connectionName}</td>
                       <td>
                         {new Date(g.startsAt).toLocaleString()} → {new Date(g.endsAt).toLocaleString()}
+                        {g.recurrence && (
+                          <div className="tiny">
+                            {g.recurrence.daysOfWeek.map((d) => DAY_LABELS[d]).join("/")} ·{" "}
+                            {String(Math.floor(g.recurrence.startMinutes / 60)).padStart(2, "0")}:
+                            {String(g.recurrence.startMinutes % 60).padStart(2, "0")}–
+                            {String(Math.floor(g.recurrence.endMinutes / 60)).padStart(2, "0")}:
+                            {String(g.recurrence.endMinutes % 60).padStart(2, "0")}
+                          </div>
+                        )}
                       </td>
                       <td className={`status ${g.status === "active" ? "online" : g.status === "scheduled" ? "degraded" : "offline"}`}>
                         {g.status}

@@ -182,13 +182,27 @@ export function sessionView(session) {
   };
 }
 
+// Minutes since local midnight, for comparing against a recurrence window.
+function minutesOfDay(date) {
+  return date.getHours() * 60 + date.getMinutes();
+}
+
 export function grantStatus(grant, at = Date.now()) {
   if (grant.revoked) return "revoked";
   const start = new Date(grant.startsAt).getTime();
   const end = new Date(grant.endsAt).getTime();
   if (at < start) return "scheduled";
   if (at > end) return "expired";
-  return "active";
+  if (!grant.recurrence) return "active";
+  // Within the overall enrollment window, a recurring grant is only
+  // "active" during its own days/hours — e.g. weekdays 9am-5pm — and
+  // "scheduled" (will recur again) the rest of the time.
+  const { daysOfWeek, startMinutes, endMinutes } = grant.recurrence;
+  const now = new Date(at);
+  const inDay = !daysOfWeek?.length || daysOfWeek.includes(now.getDay());
+  const mins = minutesOfDay(now);
+  const inWindow = mins >= startMinutes && mins < endMinutes;
+  return inDay && inWindow ? "active" : "scheduled";
 }
 
 export function grantView(grant) {
@@ -203,6 +217,7 @@ export function grantView(grant) {
     reason: grant.reason,
     createdBy: grant.createdBy,
     createdAt: grant.createdAt,
+    recurrence: grant.recurrence || null,
     status: grantStatus(grant)
   };
 }
@@ -244,7 +259,29 @@ export function evaluateAccess(actor, connectionOrId) {
   return { allowed: false, standing: false, grant: null, reason: "No active grant for this host" };
 }
 
-export function createGrant({ actor, user, conn, group, startsAt, endsAt, reason }) {
+function normalizeRecurrence(recurrence) {
+  if (!recurrence) return null;
+  const daysOfWeek = Array.isArray(recurrence.daysOfWeek)
+    ? recurrence.daysOfWeek.map(Number).filter((d) => d >= 0 && d <= 6)
+    : [];
+  const startMinutes = Number(recurrence.startMinutes);
+  const endMinutes = Number(recurrence.endMinutes);
+  if (
+    daysOfWeek.length === 0 ||
+    !Number.isFinite(startMinutes) ||
+    !Number.isFinite(endMinutes) ||
+    startMinutes < 0 ||
+    endMinutes > 24 * 60 ||
+    endMinutes <= startMinutes
+  ) {
+    const err = new Error("Invalid recurrence window");
+    err.status = 400;
+    throw err;
+  }
+  return { daysOfWeek, startMinutes, endMinutes };
+}
+
+export function createGrant({ actor, user, conn, group, startsAt, endsAt, reason, recurrence }) {
   const start = startsAt ? new Date(startsAt) : new Date();
   const end = endsAt ? new Date(endsAt) : new Date(start.getTime() + 60 * 60 * 1000);
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
@@ -265,6 +302,7 @@ export function createGrant({ actor, user, conn, group, startsAt, endsAt, reason
     reason: reason || "",
     createdBy: actor.displayName || actor.username,
     createdAt: new Date().toISOString(),
+    recurrence: normalizeRecurrence(recurrence),
     revoked: false
   };
   grants.unshift(grant);

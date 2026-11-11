@@ -359,7 +359,8 @@ app.post("/api/grants", auth, requireAdmin, (req, res) => {
       group: body.group || null,
       startsAt: body.startsAt,
       endsAt: body.endsAt,
-      reason: body.reason
+      reason: body.reason,
+      recurrence: body.recurrence || null
     });
     logActivity(req.user.displayName, "Granted access", `${user.username} · ${grant.connectionName}`, "grant");
     res.status(201).json(grantView(grant));

@@ -90,6 +90,34 @@ test("a group-level grant covers every host in that group, not others", () => {
   assert.equal(outOfGroup.allowed, false);
 });
 
+test("a recurring grant is only active inside its own days/hours window", () => {
+  const monday9am = new Date("2024-01-01T09:30:00"); // a Monday
+  const mondayMidnight = new Date("2024-01-01T00:00:00");
+  const grant = createGrant({
+    actor,
+    user: { id: operator.sub, username: operator.username },
+    conn: { id: "conn-weekday-9to5", name: "Weekday Host" },
+    startsAt: new Date("2023-12-01T00:00:00").toISOString(),
+    endsAt: new Date("2024-06-01T00:00:00").toISOString(),
+    recurrence: { daysOfWeek: [1, 2, 3, 4, 5], startMinutes: 9 * 60, endMinutes: 17 * 60 }
+  });
+  assert.equal(grantStatus(grant, monday9am.getTime()), "active");
+  assert.equal(grantStatus(grant, mondayMidnight.getTime()), "scheduled");
+});
+
+test("createGrant rejects a recurrence with no days selected", () => {
+  assert.throws(() =>
+    createGrant({
+      actor,
+      user: { id: operator.sub, username: operator.username },
+      conn: { id: "conn-bad-recur", name: "Bad" },
+      startsAt: new Date().toISOString(),
+      endsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      recurrence: { daysOfWeek: [], startMinutes: 540, endMinutes: 1020 }
+    })
+  );
+});
+
 test("a revoked grant no longer grants access", () => {
   const grant = createGrant({
     actor,
