@@ -162,6 +162,16 @@ export type Stats = {
   sso?: { google: boolean; entra: boolean };
 };
 
+export type Usage = {
+  days: number;
+  totalSessions: number;
+  totalMinutes: number;
+  sessionsByDay: { date: string; count: number }[];
+  topHosts: { key: string; name: string; sessions: number; totalMinutes: number }[];
+  topUsers: { key: string; name: string; sessions: number; totalMinutes: number }[];
+  latency: { connectionId: string; connectionName: string; status: string; latencyMs: number | null; history: (number | null)[] }[];
+};
+
 export type GrantRequest = {
   id: string;
   userId: string;

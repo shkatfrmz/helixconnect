@@ -1,7 +1,8 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { api, Activity, Connection, Grant, GrantRequest, Health, Recording, Stats, User } from "../api";
+import { api, Activity, Connection, Grant, GrantRequest, Health, Recording, Stats, Usage, User } from "../api";
 import { useAuth } from "../auth";
 import RecordingPlayer from "../components/RecordingPlayer";
+import { BarChart, Sparkline } from "../components/MiniCharts";
 
 const emptyHost = {
   name: "",
@@ -29,7 +30,7 @@ function localInput(d: Date) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-const TABS = ["Overview", "Users", "Access", "Hosts", "Recordings", "Audit"] as const;
+const TABS = ["Overview", "Users", "Access", "Hosts", "Recordings", "Usage", "Audit"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function Admin() {
@@ -65,6 +66,7 @@ export default function Admin() {
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [checkingId, setCheckingId] = useState<string | null>(null);
+  const [usage, setUsage] = useState<Usage | null>(null);
 
   function refresh() {
     api<Health>("/api/health").then(setHealth);
@@ -75,6 +77,7 @@ export default function Admin() {
       api<Grant[]>("/api/grants").then(setGrants);
       api<GrantRequest[]>("/api/grant-requests").then(setRequests);
       api<Recording[]>("/api/recordings").then(setRecordings);
+      api<Usage>("/api/usage?days=7").then(setUsage);
     }
   }
 
@@ -715,7 +718,8 @@ export default function Admin() {
             <h3>Hosts</h3>
             <p className="muted">
               Per-host clipboard, file-transfer, and recording access. File transfer only applies to RDP and SSH.
-              Status is a real TCP check against each host's own address, rechecked automatically every 20s.
+              Status is a real TCP check against each host's own address. Live deployments recheck every host
+              automatically every 20s; use "Check now" to probe one host immediately regardless of mode.
             </p>
             <table>
               <thead>
@@ -853,6 +857,122 @@ export default function Admin() {
               </div>
             </div>
           )}
+        </article>
+      </div>
+      )}
+
+      {tab === "Usage" && user?.role === "admin" && (
+      <div className="admin-grid">
+        <article className="panel">
+          <h3>Last 7 days</h3>
+          <ul className="kv">
+            <li>
+              <span>Sessions</span>
+              <strong>{usage?.totalSessions ?? "—"}</strong>
+            </li>
+            <li>
+              <span>Session minutes</span>
+              <strong>{usage?.totalMinutes ?? "—"}</strong>
+            </li>
+          </ul>
+          <p className="muted">Sessions per day</p>
+          {usage && (
+            <BarChart
+              data={usage.sessionsByDay.map((d) => ({
+                label: new Date(d.date).toLocaleDateString(undefined, { weekday: "short" }),
+                value: d.count
+              }))}
+            />
+          )}
+        </article>
+
+        <article className="panel">
+          <h3>Busiest hosts</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Host</th>
+                <th>Sessions</th>
+                <th>Minutes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {!usage || usage.topHosts.length === 0 ? (
+                <tr>
+                  <td colSpan={3} className="muted">
+                    No sessions in this window yet.
+                  </td>
+                </tr>
+              ) : (
+                usage.topHosts.map((h) => (
+                  <tr key={h.key}>
+                    <td>{h.name}</td>
+                    <td className="tiny">{h.sessions}</td>
+                    <td className="tiny">{h.totalMinutes}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </article>
+
+        <article className="panel">
+          <h3>Busiest users</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Sessions</th>
+                <th>Minutes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {!usage || usage.topUsers.length === 0 ? (
+                <tr>
+                  <td colSpan={3} className="muted">
+                    No sessions in this window yet.
+                  </td>
+                </tr>
+              ) : (
+                usage.topUsers.map((u) => (
+                  <tr key={u.key}>
+                    <td>{u.name}</td>
+                    <td className="tiny">{u.sessions}</td>
+                    <td className="tiny">{u.totalMinutes}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </article>
+
+        <article className="panel wide">
+          <h3>Host latency</h3>
+          <p className="muted">Recent real TCP-check latency per host — the same checks behind the Hosts tab status column.</p>
+          <table>
+            <thead>
+              <tr>
+                <th>Host</th>
+                <th>Status</th>
+                <th>Current</th>
+                <th>Trend</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(usage?.latency || []).map((l) => (
+                <tr key={l.connectionId}>
+                  <td>{l.connectionName}</td>
+                  <td>
+                    <span className={`status ${l.status}`}>{l.status}</span>
+                  </td>
+                  <td className="tiny">{l.latencyMs != null ? `${l.latencyMs} ms` : "—"}</td>
+                  <td>
+                    <Sparkline values={l.history} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </article>
       </div>
       )}

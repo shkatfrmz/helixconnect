@@ -71,7 +71,9 @@ import {
   finishRecording,
   findRecording,
   removeRecording,
-  recordingsForUser
+  recordingsForUser,
+  sessionHistory,
+  recordSessionHistory
 } from "./store.js";
 import { authorizeUrl, exchangeCode, publicOrigin, publicSsoStatus } from "./oidc.js";
 
@@ -213,19 +215,24 @@ function attachGuacamoleToken(session, conn, extras = {}) {
   return session.guacamoleToken;
 }
 
-// Finds the in-progress recording tied to this session (if the connection
-// had recording enabled) and finalizes it: in live mode guacd has already
-// written the .guac file to RECORDINGS_DIR by the time the session ends, so
-// we just stat it; in demo mode there is no guacd, so we synthesize a real,
-// valid (if blank) .guac recording spanning the session's actual duration.
-function finalizeSessionRecording(session) {
+// Called once, right after endSession() sets endedAt/endReason, from every
+// code path that can end a session (force-disconnect, idle timeout, grant
+// expiry/revocation). Does two things: finalizes any in-progress recording
+// (in live mode guacd has already written the .guac file to RECORDINGS_DIR
+// by now, so we just stat it; in demo mode there is no guacd, so we
+// synthesize a real, valid — if blank — .guac file spanning the session's
+// actual duration), and appends a summary to sessionHistory for the usage
+// dashboard.
+function finalizeEndedSession(session) {
   const rec = recordings.find((r) => r.sessionId === session.id && r.status === "recording");
-  if (!rec) return;
-  const durationMs = Math.max(0, new Date(session.endedAt).getTime() - new Date(session.startedAt).getTime());
-  const sizeBytes =
-    session.mode === "demo" ? synthesizeDemoRecording(session.id, durationMs) : recordingFileSize(session.id);
-  finishRecording(rec, sizeBytes);
-  logActivity(session.displayName, "Recording saved", session.connectionName, "recording");
+  if (rec) {
+    const durationMs = Math.max(0, new Date(session.endedAt).getTime() - new Date(session.startedAt).getTime());
+    const sizeBytes =
+      session.mode === "demo" ? synthesizeDemoRecording(session.id, durationMs) : recordingFileSize(session.id);
+    finishRecording(rec, sizeBytes);
+    logActivity(session.displayName, "Recording saved", session.connectionName, "recording");
+  }
+  recordSessionHistory(session);
 }
 
 function tickIdle() {
@@ -235,7 +242,7 @@ function tickIdle() {
       const remaining = new Date(session.grantEndsAt).getTime() - now;
       if (remaining <= 0) {
         endSession(session, "grant-expired");
-        finalizeSessionRecording(session);
+        finalizeEndedSession(session);
         logActivity("System", "Grant expired", session.connectionName, "grant");
         roomBroadcast(session.id, { type: "ended", reason: "grant-expired", session: sessionView(session) });
         continue;
@@ -251,7 +258,7 @@ function tickIdle() {
     const idleFor = now - session.lastActivity;
     if (idleFor > session.idleTimeoutMs) {
       endSession(session, "idle-timeout");
-      finalizeSessionRecording(session);
+      finalizeEndedSession(session);
       logActivity("System", "Idle timeout", session.connectionName, "session");
       roomBroadcast(session.id, { type: "ended", reason: "idle-timeout", session: sessionView(session) });
       continue;
@@ -275,6 +282,8 @@ function requireAdmin(req, res, next) {
 // every mapped connection, live deployment or demo: a demo host pointed at
 // a fictional address will honestly show offline, exactly as a real one
 // that's actually down would.
+const LATENCY_HISTORY_LIMIT = 50;
+
 async function checkConnectionHealth(conn) {
   const { reachable, latencyMs } = await probeHost(conn.hostname, conn.port);
   conn.status = classifyStatus(reachable, latencyMs);
@@ -282,10 +291,27 @@ async function checkConnectionHealth(conn) {
   if (reachable) conn.lastSeenAt = new Date().toISOString();
   conn.lastSeen = relativeTime(conn.lastSeenAt);
   persistConnectionHealth(conn);
+  // Latency history is a rolling in-memory ring buffer, not persisted —
+  // same reasoning as live sessions/rooms: it's an operational view that
+  // rebuilds itself within a few sweeps of a restart, not a durable record.
+  if (!conn.latencyHistory) conn.latencyHistory = [];
+  conn.latencyHistory.push({ at: new Date().toISOString(), latencyMs, status: conn.status });
+  if (conn.latencyHistory.length > LATENCY_HISTORY_LIMIT) conn.latencyHistory.shift();
   return conn;
 }
 
 async function runHealthChecks() {
+  // Only sweep automatically once there's a real relay behind this
+  // deployment. In demo mode the seeded hosts are fictional addresses with
+  // nothing actually listening — automatically flipping them to "offline"
+  // would silently block the core "open a session" demo flow for everyone,
+  // since offline hosts refuse new sessions. An admin can still request a
+  // genuine, real probe of any individual host at any time via "Check now"
+  // (checkConnectionHealth / POST /api/connections/:id/check) regardless of
+  // mode — that's an explicit, single-host action, not something that
+  // silently changes what the whole demo can do.
+  const guacd = await probeGuacd();
+  if (!guacd) return;
   await Promise.all(connections.map((conn) => checkConnectionHealth(conn).catch(() => null)));
 }
 
@@ -541,7 +567,7 @@ app.post("/api/grants/:id/revoke", auth, requireAdmin, (req, res) => {
   for (const session of activeSessions()) {
     if (session.grantId === grant.id) {
       endSession(session, "grant-revoked");
-      finalizeSessionRecording(session);
+      finalizeEndedSession(session);
       roomBroadcast(session.id, { type: "ended", reason: "grant-revoked", session: sessionView(session) });
     }
   }
@@ -719,6 +745,53 @@ app.delete("/api/recordings/:id", auth, requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+app.get("/api/usage", auth, requireAdmin, (req, res) => {
+  const days = Math.min(30, Math.max(1, Number(req.query.days) || 7));
+  const since = Date.now() - days * 24 * 60 * 60 * 1000;
+  const recent = sessionHistory.filter((s) => new Date(s.endedAt).getTime() >= since);
+
+  const dayBuckets = new Map();
+  for (let i = days - 1; i >= 0; i--) {
+    const key = new Date(Date.now() - i * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    dayBuckets.set(key, 0);
+  }
+  for (const s of recent) {
+    const key = new Date(s.endedAt).toISOString().slice(0, 10);
+    if (dayBuckets.has(key)) dayBuckets.set(key, dayBuckets.get(key) + 1);
+  }
+
+  function topBy(keyFn, nameFn) {
+    const map = new Map();
+    for (const s of recent) {
+      const key = keyFn(s);
+      const entry = map.get(key) || { key, name: nameFn(s), sessions: 0, totalMs: 0 };
+      entry.sessions += 1;
+      entry.totalMs += s.durationMs;
+      map.set(key, entry);
+    }
+    return [...map.values()]
+      .sort((a, b) => b.sessions - a.sessions)
+      .slice(0, 8)
+      .map((e) => ({ ...e, totalMinutes: Math.round(e.totalMs / 60000) }));
+  }
+
+  res.json({
+    days,
+    totalSessions: recent.length,
+    totalMinutes: Math.round(recent.reduce((sum, s) => sum + s.durationMs, 0) / 60000),
+    sessionsByDay: [...dayBuckets.entries()].map(([date, count]) => ({ date, count })),
+    topHosts: topBy((s) => s.connectionId, (s) => s.connectionName),
+    topUsers: topBy((s) => s.userId, (s) => s.displayName || s.username),
+    latency: connections.map((c) => ({
+      connectionId: c.id,
+      connectionName: c.name,
+      status: c.status,
+      latencyMs: c.latencyMs,
+      history: (c.latencyHistory || []).map((h) => h.latencyMs)
+    }))
+  });
+});
+
 app.get("/api/stats", auth, async (_req, res) => {
   const guacd = await probeGuacd();
   const online = connections.filter((c) => c.status === "online").length;
@@ -837,7 +910,7 @@ app.post("/api/sessions/:id/disconnect", auth, (req, res) => {
   if (!session) return res.status(404).json({ error: "Session not found" });
   if (!canManage(req, session)) return res.status(403).json({ error: "Forbidden" });
   endSession(session, "force-disconnect");
-  finalizeSessionRecording(session);
+  finalizeEndedSession(session);
   logActivity(req.user.displayName, "Force disconnect", session.connectionName, "session");
   roomBroadcast(session.id, { type: "ended", reason: "force-disconnect", session: sessionView(session) });
   res.json(sessionView(session));

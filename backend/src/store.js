@@ -38,6 +38,12 @@ export const activity = persistent
 export const grants = persistent ? await db.loadGrants() : [];
 export const grantRequests = persistent ? await db.loadGrantRequests() : [];
 export const recordings = persistent ? await db.loadRecordings() : [];
+// Finished-session summaries for the usage dashboard — deliberately separate
+// from `activity` (which is a shared, 80-entry-capped feed of every kind of
+// event) so a busy day of logins/grants/clipboard changes can't starve out
+// the session history a 7-day usage chart needs.
+export const sessionHistory = persistent ? await db.loadSessionHistory() : [];
+const MAX_SESSION_HISTORY = 2000;
 export const sessions = new Map();
 export const rooms = new Map();
 
@@ -159,6 +165,32 @@ export function removeRecording(rec) {
 export function recordingsForUser(user) {
   if (user.role === "admin") return recordings;
   return recordings.filter((r) => r.userId === user.sub);
+}
+
+// Called once a session has fully ended (any reason), after endSession() has
+// set endedAt/endReason. Captures just enough to drive the usage dashboard's
+// day-by-day counts and per-host/per-user totals without re-deriving them
+// from the live `sessions` map, which gets pruned a few hours after a
+// session ends.
+export function recordSessionHistory(session) {
+  const entry = {
+    id: session.id,
+    connectionId: session.connectionId,
+    connectionName: session.connectionName,
+    protocol: session.protocol,
+    userId: session.userId,
+    username: session.username,
+    displayName: session.displayName,
+    mode: session.mode,
+    startedAt: session.startedAt,
+    endedAt: session.endedAt,
+    durationMs: Math.max(0, new Date(session.endedAt).getTime() - new Date(session.startedAt).getTime()),
+    endReason: session.endReason || null
+  };
+  sessionHistory.push(entry);
+  if (sessionHistory.length > MAX_SESSION_HISTORY) sessionHistory.shift();
+  persist("session history", () => db.saveSessionHistoryEntry(entry));
+  return entry;
 }
 
 export function requestGrantView(r) {

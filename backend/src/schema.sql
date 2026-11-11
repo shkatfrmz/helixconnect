@@ -93,6 +93,22 @@ CREATE TABLE IF NOT EXISTS recordings (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS session_history (
+  id TEXT PRIMARY KEY,
+  connection_id TEXT NOT NULL,
+  connection_name TEXT NOT NULL,
+  protocol TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  username TEXT NOT NULL,
+  display_name TEXT,
+  mode TEXT NOT NULL,
+  started_at TIMESTAMPTZ NOT NULL,
+  ended_at TIMESTAMPTZ NOT NULL,
+  duration_ms BIGINT NOT NULL DEFAULT 0,
+  end_reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS activity (
   id TEXT PRIMARY KEY,
   user_name TEXT,
@@ -105,6 +121,7 @@ CREATE TABLE IF NOT EXISTS activity (
 CREATE INDEX IF NOT EXISTS idx_grants_user ON grants (user_id);
 CREATE INDEX IF NOT EXISTS idx_activity_created ON activity (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_recordings_user ON recordings (user_id);
+CREATE INDEX IF NOT EXISTS idx_session_history_ended ON session_history (ended_at DESC);
 
 -- Additive migrations for deployments created before a column existed.
 -- CREATE TABLE IF NOT EXISTS above is a no-op against an existing table, so

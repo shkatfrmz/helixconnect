@@ -251,6 +251,42 @@ function rowToRecording(row) {
   };
 }
 
+// --- session history (usage dashboard) --------------------------------
+
+export async function loadSessionHistory(limit = 2000) {
+  const { rows } = await pool.query("SELECT * FROM session_history ORDER BY ended_at DESC LIMIT $1", [limit]);
+  return rows.map(rowToSessionHistory).reverse();
+}
+
+export async function saveSessionHistoryEntry(entry) {
+  await pool.query(
+    `INSERT INTO session_history (id, connection_id, connection_name, protocol, user_id, username, display_name, mode, started_at, ended_at, duration_ms, end_reason)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+     ON CONFLICT (id) DO NOTHING`,
+    [
+      entry.id, entry.connectionId, entry.connectionName, entry.protocol, entry.userId, entry.username,
+      entry.displayName || "", entry.mode, entry.startedAt, entry.endedAt, entry.durationMs, entry.endReason
+    ]
+  );
+}
+
+function rowToSessionHistory(row) {
+  return {
+    id: row.id,
+    connectionId: row.connection_id,
+    connectionName: row.connection_name,
+    protocol: row.protocol,
+    userId: row.user_id,
+    username: row.username,
+    displayName: row.display_name || "",
+    mode: row.mode,
+    startedAt: row.started_at.toISOString(),
+    endedAt: row.ended_at.toISOString(),
+    durationMs: Number(row.duration_ms || 0),
+    endReason: row.end_reason || null
+  };
+}
+
 // --- activity --------------------------------------------------------------
 
 export async function loadActivity(limit = 80) {

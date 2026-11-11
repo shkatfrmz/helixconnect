@@ -741,6 +741,13 @@ select:focus { outline: none; border-color: var(--accent); }
 .recording-controls { display: flex; align-items: center; gap: 12px; }
 .recording-controls input[type="range"] { flex: 1; }
 .recording-time { font-family: var(--mono); white-space: nowrap; }
+
+.bar-chart { width: 100%; height: 120px; }
+.bar-chart-bar { fill: var(--accent-2); }
+.bar-chart-label { font-size: 5px; fill: var(--muted); font-family: var(--sans); }
+.bar-chart-value { font-size: 5px; fill: var(--ink); font-family: var(--sans); }
+.sparkline { display: block; }
+.sparkline-line { fill: none; stroke: var(--accent-2); stroke-width: 1.5; }
 .display-host { width: 100%; height: 100%; overflow: hidden; }
 .display-host.hidden { display: none; }
 .display-surface { transform-origin: 0 0; }
