@@ -104,7 +104,22 @@ export type Connection = {
   clipboardEnabled?: boolean;
   fileTransferEnabled?: boolean;
   recordingEnabled?: boolean;
+  transport?: "direct" | "agent";
+  agentId?: string | null;
+  agentPort?: number | null;
   access?: Access;
+};
+
+export type Agent = {
+  id: string;
+  name: string;
+  hostnameReported: string;
+  os: string;
+  createdBy: string;
+  createdAt: string;
+  online: boolean;
+  lastSeenAt: string | null;
+  pendingEnrollment: boolean;
 };
 
 export type Recording = {

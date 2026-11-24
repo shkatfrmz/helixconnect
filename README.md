@@ -78,6 +78,17 @@ Email and Slack notifications are both optional and independently configured —
 
 Admins can see which channels are configured and send a test notification from the Overview tab in Admin settings.
 
+## Remote agents (NAT'd / unreachable hosts)
+
+HelixConnect's own alternative to MeshCentral-style remote access, for a machine it can't dial directly (behind NAT, no inbound RDP/VNC/SSH port opened): a small Node.js agent runs on that machine and dials **out** to HelixConnect instead.
+
+- **Enroll** an agent from Admin → Agents. This mints a one-time enrollment token (valid 30 minutes, single-use) and shows the exact command to run on the target machine.
+- **Run the agent** there — see `agent/README.md` for the full Windows setup, including running it as a service with NSSM or `node-windows`. On first run it exchanges the enrollment token for a persistent secret (stored in `agent-config.json` next to the script) and never needs the token again; on every later run it reconnects with that secret.
+- **Point a connection at it**: when adding or editing a host in Admin → Hosts, set Transport to "Agent" and pick the enrolled agent plus the local port on that machine (3389 for RDP, 5900 for VNC, 22 for SSH).
+- **How it works**: when a session opens against an agent-backed connection, the backend opens a loopback listener and asks the agent (over its already-open control socket) to relay to that local port; `guacd` is pointed at the loopback instead of the real host and is otherwise unaware anything unusual happened — it's the exact same RDP/VNC/SSH bytes it would get from a directly reachable host. The tunnel closes automatically whenever the session ends, through the same teardown path as every other session-end reason.
+- **Status**: an agent-backed connection's "hostname" in the catalog is just an admin-chosen label, not a real network address, so it's never TCP-probed. Its online/offline status instead tracks whether the agent's own control socket is currently connected, live in both demo and production.
+- Requires no new environment variables — enrollment tokens and secrets use the same `HELIX_CRYPTO_KEY`/bcrypt infrastructure as user passwords and stored host credentials.
+
 ## Testing
 
 ```bash

@@ -698,6 +698,21 @@ select:focus { outline: none; border-color: var(--accent); }
   color: var(--accent);
   margin: 8px 0;
 }
+.install-command {
+  margin-top: 14px;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.install-command pre {
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--ink);
+  margin: 6px 0 10px;
+}
 .join-bar {
   display: flex;
   gap: 10px;

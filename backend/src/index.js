@@ -328,19 +328,62 @@ async function checkConnectionHealth(conn) {
   return conn;
 }
 
+// An agent-backed connection's "hostname" is just an admin-chosen label,
+// not a real dial target (see openAgentTunnel) — a TCP probe of it would be
+// meaningless and, worse, would eventually mark a perfectly healthy
+// agent-backed host "offline" and block POST /api/sessions from ever
+// opening it. Its reachability is simply whether the agent's own control
+// socket is currently connected.
+function syncAgentConnectionStatus(conn) {
+  const previousStatus = conn.status;
+  const online = agentSockets.has(conn.agentId);
+  conn.status = online ? "online" : "offline";
+  conn.latencyMs = null;
+  if (online) conn.lastSeenAt = new Date().toISOString();
+  conn.lastSeen = relativeTime(conn.lastSeenAt);
+  persistConnectionHealth(conn);
+  if (previousStatus !== "offline" && conn.status === "offline") {
+    notify({ slack: `:red_circle: ${conn.name}'s agent went offline.` });
+    logActivity("System", "Agent host went offline", conn.name, "system");
+  } else if (previousStatus === "offline" && conn.status !== "offline") {
+    notify({ slack: `:large_green_circle: ${conn.name}'s agent is back online.` });
+    logActivity("System", "Agent host back online", conn.name, "system");
+  }
+  return conn;
+}
+
+// Called right when an agent connects or disconnects, so every connection
+// mapped to it flips status immediately rather than waiting up to
+// HELIX_HEALTH_CHECK_MS for the next sweep to notice.
+function syncConnectionsForAgent(agentId) {
+  for (const conn of connections) {
+    if (conn.agentId === agentId) syncAgentConnectionStatus(conn);
+  }
+}
+
 async function runHealthChecks() {
-  // Only sweep automatically once there's a real relay behind this
-  // deployment. In demo mode the seeded hosts are fictional addresses with
-  // nothing actually listening — automatically flipping them to "offline"
-  // would silently block the core "open a session" demo flow for everyone,
-  // since offline hosts refuse new sessions. An admin can still request a
-  // genuine, real probe of any individual host at any time via "Check now"
+  // Agent connections sync from the agent's own control-socket state —
+  // cheap, meaningful in demo or live mode alike, and unrelated to whether
+  // a real guacd relay exists — so they're not part of the guacd-gated
+  // sweep below.
+  for (const conn of connections) {
+    if (conn.transport === "agent") syncAgentConnectionStatus(conn);
+  }
+  // Only sweep directly-reachable hosts automatically once there's a real
+  // relay behind this deployment. In demo mode the seeded hosts are
+  // fictional addresses with nothing actually listening — automatically
+  // flipping them to "offline" would silently block the core "open a
+  // session" demo flow for everyone, since offline hosts refuse new
+  // sessions. An admin can still request a genuine, real probe of any
+  // individual host at any time via "Check now"
   // (checkConnectionHealth / POST /api/connections/:id/check) regardless of
   // mode — that's an explicit, single-host action, not something that
   // silently changes what the whole demo can do.
   const guacd = await probeGuacd();
   if (!guacd) return;
-  await Promise.all(connections.map((conn) => checkConnectionHealth(conn).catch(() => null)));
+  await Promise.all(
+    connections.filter((c) => c.transport !== "agent").map((conn) => checkConnectionHealth(conn).catch(() => null))
+  );
 }
 
 function finishLogin(res, user) {
@@ -735,6 +778,7 @@ app.post("/api/connections", auth, (req, res) => {
   };
   connections.push(conn);
   persistConnection(conn);
+  if (conn.transport === "agent") syncAgentConnectionStatus(conn);
   logActivity(req.user.displayName, "Added connection", conn.name, "admin");
   res.status(201).json(publicConnection(conn));
 });
@@ -760,6 +804,7 @@ app.patch("/api/connections/:id", auth, (req, res) => {
     conn.agentId = null;
     conn.agentPort = null;
   }
+  if (conn.transport === "agent") syncAgentConnectionStatus(conn);
   persistConnection(conn);
   logActivity(req.user.displayName, "Updated connection", conn.name, "admin");
   res.json(publicConnection(conn));
@@ -774,7 +819,8 @@ app.get("/api/connections/:id", auth, (req, res) => {
 app.post("/api/connections/:id/check", auth, requireAdmin, async (req, res) => {
   const conn = connections.find((c) => c.id === req.params.id);
   if (!conn) return res.status(404).json({ error: "Connection not found" });
-  await checkConnectionHealth(conn);
+  if (conn.transport === "agent") syncAgentConnectionStatus(conn);
+  else await checkConnectionHealth(conn);
   res.json(publicConnection(conn));
 });
 
@@ -1228,6 +1274,7 @@ agentControlWss.on("connection", (ws, req) => {
         const secret = completeAgentEnrollment(agent, { hostnameReported: msg.hostname, os: msg.os });
         authed = true;
         agentSockets.set(agent.id, ws);
+        syncConnectionsForAgent(agent.id);
         logActivity("System", "Agent enrolled", agent.name, "admin");
         ws.send(JSON.stringify({ type: "enrolled", secret }));
         return;
@@ -1237,6 +1284,7 @@ agentControlWss.on("connection", (ws, req) => {
         if (msg.hostname) agent.hostnameReported = msg.hostname;
         if (msg.os) agent.os = msg.os;
         agentSockets.set(agent.id, ws);
+        syncConnectionsForAgent(agent.id);
         ws.send(JSON.stringify({ type: "authed" }));
         return;
       }
@@ -1253,6 +1301,7 @@ agentControlWss.on("connection", (ws, req) => {
     if (authed && agentSockets.get(agent.id) === ws) {
       agentSockets.delete(agent.id);
       markAgentOffline(agent);
+      syncConnectionsForAgent(agent.id);
     }
   });
 });

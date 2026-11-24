@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { api, Activity, Connection, Grant, GrantRequest, Health, Recording, Stats, Usage, User } from "../api";
+import { api, Activity, Agent, Connection, Grant, GrantRequest, Health, Recording, Stats, Usage, User } from "../api";
 import { useAuth } from "../auth";
 import RecordingPlayer from "../components/RecordingPlayer";
 import { BarChart, Sparkline } from "../components/MiniCharts";
@@ -15,7 +15,9 @@ const emptyHost = {
   description: "",
   clipboardEnabled: true,
   fileTransferEnabled: false,
-  recordingEnabled: false
+  recordingEnabled: false,
+  transport: "direct" as "direct" | "agent",
+  agentId: ""
 };
 
 function toMinutes(hhmm: string) {
@@ -30,7 +32,7 @@ function localInput(d: Date) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-const TABS = ["Overview", "Users", "Access", "Hosts", "Recordings", "Usage", "Audit"] as const;
+const TABS = ["Overview", "Users", "Access", "Hosts", "Agents", "Recordings", "Usage", "Audit"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function Admin() {
@@ -70,6 +72,13 @@ export default function Admin() {
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [checkingId, setCheckingId] = useState<string | null>(null);
   const [usage, setUsage] = useState<Usage | null>(null);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [agentName, setAgentName] = useState("");
+  const [agentMsg, setAgentMsg] = useState("");
+  // Install instructions only exist right after enrolling — the enrollment
+  // token itself is never persisted anywhere (see createAgent in store.js),
+  // so this is the only moment it can be shown.
+  const [justEnrolled, setJustEnrolled] = useState<{ agent: Agent; enrollToken: string } | null>(null);
 
   function refresh() {
     api<Health>("/api/health").then(setHealth);
@@ -82,6 +91,7 @@ export default function Admin() {
       api<Recording[]>("/api/recordings").then(setRecordings);
       api<Usage>("/api/usage?days=7").then(setUsage);
       api<{ email: boolean; slack: boolean }>("/api/notifications/status").then(setNotifStatus);
+      api<Agent[]>("/api/agents").then(setAgents);
     }
   }
 
@@ -106,6 +116,7 @@ export default function Admin() {
         body: JSON.stringify({
           ...form,
           port: Number(form.port),
+          agentPort: Number(form.port),
           tags: [form.protocol, form.group.toLowerCase()]
         })
       });
@@ -153,6 +164,28 @@ export default function Admin() {
     } finally {
       setCheckingId(null);
     }
+  }
+
+  async function enrollAgent(e: FormEvent) {
+    e.preventDefault();
+    setAgentMsg("");
+    try {
+      const created = await api<Agent & { enrollToken: string }>("/api/agents", {
+        method: "POST",
+        body: JSON.stringify({ name: agentName || "New agent" })
+      });
+      setJustEnrolled({ agent: created, enrollToken: created.enrollToken });
+      setAgentName("");
+      refresh();
+    } catch (err) {
+      setAgentMsg(err instanceof Error ? err.message : "Failed");
+    }
+  }
+
+  async function removeAgent(id: string) {
+    await api(`/api/agents/${id}`, { method: "DELETE" });
+    if (justEnrolled?.agent.id === id) setJustEnrolled(null);
+    refresh();
   }
 
   async function sendTestNotification() {
@@ -702,14 +735,31 @@ export default function Admin() {
                 <option value="vnc">VNC</option>
                 <option value="ssh">SSH</option>
               </select>
+              <select
+                value={form.transport}
+                onChange={(e) => setForm({ ...form, transport: e.target.value as "direct" | "agent" })}
+              >
+                <option value="direct">Direct (reachable now)</option>
+                <option value="agent">Agent (behind NAT/firewall)</option>
+              </select>
+              {form.transport === "agent" ? (
+                <select value={form.agentId} onChange={(e) => setForm({ ...form, agentId: e.target.value })} required>
+                  <option value="">Choose an agent…</option>
+                  {agents.map((a) => (
+                    <option key={a.id} value={a.id} disabled={!a.online}>
+                      {a.name} {a.online ? "" : "(offline)"}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
               <input
-                placeholder="Hostname"
+                placeholder={form.transport === "agent" ? "Label (e.g. laptop name)" : "Hostname"}
                 value={form.hostname}
                 onChange={(e) => setForm({ ...form, hostname: e.target.value })}
                 required
               />
               <input
-                placeholder="Port"
+                placeholder={form.transport === "agent" ? "Local port on that machine" : "Port"}
                 type="number"
                 value={form.port}
                 onChange={(e) => setForm({ ...form, port: Number(e.target.value) })}
@@ -767,7 +817,9 @@ export default function Admin() {
             <p className="muted">
               Per-host clipboard, file-transfer, and recording access. File transfer only applies to RDP and SSH.
               Status is a real TCP check against each host's own address. Live deployments recheck every host
-              automatically every 20s; use "Check now" to probe one host immediately regardless of mode.
+              automatically every 20s; use "Check now" to probe one host immediately regardless of mode. A host
+              added with transport "Agent" skips that check entirely — reachability there depends on whether its
+              agent is online (see the Agents tab) rather than a direct network address.
             </p>
             <table>
               <thead>
@@ -786,7 +838,15 @@ export default function Admin() {
                   <tr key={c.id}>
                     <td>
                       {c.name}
-                      <div className="tiny">{c.hostname}</div>
+                      <div className="tiny">
+                        {c.hostname}
+                        {c.transport === "agent" && (
+                          <>
+                            {" "}
+                            &middot; via {agents.find((a) => a.id === c.agentId)?.name || "agent"}
+                          </>
+                        )}
+                      </div>
                     </td>
                     <td className="tiny">{c.protocol.toUpperCase()}</td>
                     <td>
@@ -835,6 +895,84 @@ export default function Admin() {
             </table>
           </article>
         )}
+      </div>
+      )}
+
+      {tab === "Agents" && user?.role === "admin" && (
+      <div className="admin-grid">
+        <article className="panel wide">
+          <h3>Enroll new agent</h3>
+          <p className="muted">
+            An agent runs on a machine HelixConnect can't reach directly — behind NAT, no inbound RDP/VNC/SSH port
+            open. It dials out to us instead. Enroll one here, then run it on that machine (see
+            agent/README.md) with the install command shown below.
+          </p>
+          <form className="host-form" onSubmit={enrollAgent}>
+            <input placeholder="Name (e.g. Alex's laptop)" value={agentName} onChange={(e) => setAgentName(e.target.value)} />
+            <button type="submit">Enroll agent</button>
+          </form>
+          {agentMsg && <p className="tiny">{agentMsg}</p>}
+          {justEnrolled && (
+            <div className="install-command">
+              <p className="tiny">
+                One-time enrollment token — valid 30 minutes, usable once. Run this on {justEnrolled.agent.name}:
+              </p>
+              <pre>
+                {`set HELIX_SERVER=wss://your-helix-server.example.com\nset HELIX_AGENT_ID=${justEnrolled.agent.id}\nset HELIX_ENROLL_TOKEN=${justEnrolled.enrollToken}\n\nnode windows-agent.js`}
+              </pre>
+              <button type="button" className="ghost" onClick={() => setJustEnrolled(null)}>
+                Dismiss
+              </button>
+            </div>
+          )}
+        </article>
+
+        <article className="panel wide">
+          <h3>Agents</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Reported as</th>
+                <th>Status</th>
+                <th>Added by</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {agents.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="tiny">
+                    No agents enrolled yet.
+                  </td>
+                </tr>
+              )}
+              {agents.map((a) => (
+                <tr key={a.id}>
+                  <td>{a.name}</td>
+                  <td className="tiny">
+                    {a.hostnameReported || (a.pendingEnrollment ? "not enrolled yet" : "—")}
+                    {a.os && <div>{a.os}</div>}
+                  </td>
+                  <td>
+                    <span className={`status ${a.online ? "online" : "offline"}`}>
+                      {a.online ? "online" : "offline"}
+                    </span>
+                    {!a.online && a.lastSeenAt && (
+                      <div className="tiny">last seen {new Date(a.lastSeenAt).toLocaleString()}</div>
+                    )}
+                  </td>
+                  <td className="tiny">{a.createdBy}</td>
+                  <td>
+                    <button className="ghost" type="button" onClick={() => removeAgent(a.id)}>
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </article>
       </div>
       )}
 
