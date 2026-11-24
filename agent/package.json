@@ -1,0 +1,14 @@
+{
+  "name": "helixconnect-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Dial-out agent for reaching HelixConnect hosts with no inbound RDP/VNC/SSH port open.",
+  "main": "windows-agent.js",
+  "scripts": {
+    "start": "node windows-agent.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

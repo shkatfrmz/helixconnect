@@ -6,3 +6,5 @@ frontend/node_modules/
 *.log
 .env
 backend/recordings/
+agent/node_modules/
+agent/agent-config.json
