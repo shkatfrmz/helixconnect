@@ -1,5 +1,6 @@
+import crypto from "crypto";
 import { users, connections as seedConnections, activity as seedActivity } from "./data.js";
-import { newId, shareCode, hashPassword } from "./crypto.js";
+import { newId, shareCode, hashPassword, verifyPassword } from "./crypto.js";
 import * as db from "./db.js";
 
 const persistent = db.hasDatabase();
@@ -30,8 +31,20 @@ export const connections = persistent
       clipboardEnabled: c.clipboardEnabled ?? true,
       fileTransferEnabled: c.fileTransferEnabled ?? false,
       recordingEnabled: c.recordingEnabled ?? false,
-      lastSeenAt: c.lastSeenAt ?? null
+      lastSeenAt: c.lastSeenAt ?? null,
+      transport: c.transport ?? "direct",
+      agentId: c.agentId ?? null,
+      agentPort: c.agentPort ?? null
     }));
+export const agents = persistent ? await db.loadAgents() : [];
+// Whether an agent's control WebSocket is currently connected is live state,
+// not something to persist — same reasoning as sessions/rooms below: a
+// socket only means anything to the process holding it.
+export const agentSockets = new Map(); // agentId -> ws
+// One entry per in-flight reverse tunnel (an agent-backed session's lifetime):
+// the backend's loopback TCP listener guacd dials into, and whichever side
+// (guacd's TCP leg, the agent's data-plane WebSocket leg) has shown up so far.
+export const tunnels = new Map(); // tunnelId -> { sessionId, agentId, listener, port, guacdSocket, agentWs }
 export const activity = persistent
   ? await db.loadActivity()
   : [...seedActivity];
@@ -98,6 +111,87 @@ export function persistGrantRequest(request) {
 
 export function persistRecording(rec) {
   persist("recording", () => db.saveRecording(rec));
+}
+
+export function persistAgent(agent) {
+  persist("agent", () => db.saveAgent(agent));
+}
+
+export function deletePersistedAgent(id) {
+  persist("agent delete", () => db.deleteAgent(id));
+}
+
+// Never hands back secretHash/enrollTokenHash — those exist only to verify
+// what an agent process presents, the same reasoning as publicConnection
+// stripping out the stored password.
+export function agentView(agent) {
+  return {
+    id: agent.id,
+    name: agent.name,
+    hostnameReported: agent.hostnameReported || "",
+    os: agent.os || "",
+    createdBy: agent.createdBy || "",
+    createdAt: agent.createdAt,
+    online: agentSockets.has(agent.id),
+    lastSeenAt: agent.lastSeenAt || null,
+    pendingEnrollment: Boolean(agent.enrollTokenHash)
+  };
+}
+
+// A fresh agent starts unenrolled: it has a one-time, 30-minute enrollment
+// token (returned once, here, never stored or logged in the clear — only its
+// hash is kept) instead of a secret, so the install command an admin copies
+// to the target machine carries no long-lived credential. The agent process
+// exchanges that token for a persistent secret on its first connect (see
+// POST /ws/agent-control in index.js), after which the token is useless.
+export function createAgent({ name, createdBy }) {
+  const enrollToken = crypto.randomBytes(16).toString("hex");
+  const agent = {
+    id: newId("agent"),
+    name: name || "New agent",
+    hostnameReported: "",
+    os: "",
+    secretHash: "",
+    enrollTokenHash: hashPassword(enrollToken),
+    enrollTokenExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+    lastSeenAt: null,
+    createdBy: createdBy || "",
+    createdAt: new Date().toISOString()
+  };
+  agents.push(agent);
+  persistAgent(agent);
+  return { agent, enrollToken };
+}
+
+export function verifyAgentEnrollToken(agent, token) {
+  if (!agent.enrollTokenHash || !token) return false;
+  if (agent.enrollTokenExpiresAt && new Date(agent.enrollTokenExpiresAt).getTime() < Date.now()) return false;
+  return verifyPassword(token, agent.enrollTokenHash);
+}
+
+// Called once, when an agent process presents a still-valid enrollment
+// token for the first time: mints its persistent secret, hands it back to
+// the agent (which stores it locally for every future reconnect), and burns
+// the enrollment token so it can never be replayed.
+export function completeAgentEnrollment(agent, { hostnameReported, os }) {
+  const secret = crypto.randomBytes(24).toString("hex");
+  agent.secretHash = hashPassword(secret);
+  agent.enrollTokenHash = null;
+  agent.enrollTokenExpiresAt = null;
+  agent.hostnameReported = hostnameReported || agent.hostnameReported;
+  agent.os = os || agent.os;
+  persistAgent(agent);
+  return secret;
+}
+
+export function verifyAgentSecret(agent, secret) {
+  if (!agent.secretHash || !secret) return false;
+  return verifyPassword(secret, agent.secretHash);
+}
+
+export function markAgentOffline(agent) {
+  agent.lastSeenAt = new Date().toISOString();
+  persistAgent(agent);
 }
 
 export function recordingView(r) {

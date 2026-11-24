@@ -82,8 +82,8 @@ export async function loadConnections() {
 export async function saveConnection(conn) {
   const encryptedPassword = conn.password ? encryptSecret(conn.password) : "";
   await pool.query(
-    `INSERT INTO connections (id, name, protocol, hostname, port, username, password_encrypted, tags, "group", status, latency_ms, last_seen, last_seen_at, description, os, resolution, color_depth, ignore_cert, security, clipboard_enabled, file_transfer_enabled, recording_enabled)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+    `INSERT INTO connections (id, name, protocol, hostname, port, username, password_encrypted, tags, "group", status, latency_ms, last_seen, last_seen_at, description, os, resolution, color_depth, ignore_cert, security, clipboard_enabled, file_transfer_enabled, recording_enabled, transport, agent_id, agent_port)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
      ON CONFLICT (id) DO UPDATE SET
        name = EXCLUDED.name, protocol = EXCLUDED.protocol, hostname = EXCLUDED.hostname,
        port = EXCLUDED.port, username = EXCLUDED.username, password_encrypted = EXCLUDED.password_encrypted,
@@ -93,13 +93,15 @@ export async function saveConnection(conn) {
        os = EXCLUDED.os, resolution = EXCLUDED.resolution, color_depth = EXCLUDED.color_depth,
        ignore_cert = EXCLUDED.ignore_cert, security = EXCLUDED.security,
        clipboard_enabled = EXCLUDED.clipboard_enabled, file_transfer_enabled = EXCLUDED.file_transfer_enabled,
-       recording_enabled = EXCLUDED.recording_enabled`,
+       recording_enabled = EXCLUDED.recording_enabled, transport = EXCLUDED.transport,
+       agent_id = EXCLUDED.agent_id, agent_port = EXCLUDED.agent_port`,
     [
       conn.id, conn.name, conn.protocol, conn.hostname, conn.port, conn.username || "", encryptedPassword,
       JSON.stringify(conn.tags || []), conn.group || "Unassigned", conn.status || "online", conn.latencyMs ?? null,
       conn.lastSeen || "Just now", conn.lastSeenAt || null, conn.description || "", conn.os || "Unknown", conn.resolution || "1280x720",
       conn.colorDepth || 24, Boolean(conn.ignoreCert), conn.security || null,
-      conn.clipboardEnabled !== false, Boolean(conn.fileTransferEnabled), Boolean(conn.recordingEnabled)
+      conn.clipboardEnabled !== false, Boolean(conn.fileTransferEnabled), Boolean(conn.recordingEnabled),
+      conn.transport || "direct", conn.agentId || null, conn.agentPort ?? null
     ]
   );
 }
@@ -137,7 +139,10 @@ function rowToConnection(row) {
     security: row.security || undefined,
     clipboardEnabled: row.clipboard_enabled,
     fileTransferEnabled: row.file_transfer_enabled,
-    recordingEnabled: row.recording_enabled
+    recordingEnabled: row.recording_enabled,
+    transport: row.transport || "direct",
+    agentId: row.agent_id || null,
+    agentPort: row.agent_port || null
   };
 }
 
@@ -284,6 +289,47 @@ function rowToSessionHistory(row) {
     endedAt: row.ended_at.toISOString(),
     durationMs: Number(row.duration_ms || 0),
     endReason: row.end_reason || null
+  };
+}
+
+// --- agents ----------------------------------------------------------------
+
+export async function loadAgents() {
+  const { rows } = await pool.query("SELECT * FROM agents ORDER BY created_at");
+  return rows.map(rowToAgent);
+}
+
+export async function saveAgent(agent) {
+  await pool.query(
+    `INSERT INTO agents (id, name, hostname_reported, os, secret_hash, enroll_token_hash, enroll_token_expires_at, last_seen_at, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     ON CONFLICT (id) DO UPDATE SET
+       name = EXCLUDED.name, hostname_reported = EXCLUDED.hostname_reported, os = EXCLUDED.os,
+       secret_hash = EXCLUDED.secret_hash, enroll_token_hash = EXCLUDED.enroll_token_hash,
+       enroll_token_expires_at = EXCLUDED.enroll_token_expires_at, last_seen_at = EXCLUDED.last_seen_at`,
+    [
+      agent.id, agent.name, agent.hostnameReported || "", agent.os || "", agent.secretHash || "",
+      agent.enrollTokenHash || null, agent.enrollTokenExpiresAt || null, agent.lastSeenAt || null, agent.createdBy || ""
+    ]
+  );
+}
+
+export async function deleteAgent(id) {
+  await pool.query("DELETE FROM agents WHERE id = $1", [id]);
+}
+
+function rowToAgent(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    hostnameReported: row.hostname_reported || "",
+    os: row.os || "",
+    secretHash: row.secret_hash || "",
+    enrollTokenHash: row.enroll_token_hash || null,
+    enrollTokenExpiresAt: row.enroll_token_expires_at ? row.enroll_token_expires_at.toISOString() : null,
+    lastSeenAt: row.last_seen_at ? row.last_seen_at.toISOString() : null,
+    createdBy: row.created_by || "",
+    createdAt: row.created_at.toISOString()
   };
 }
 

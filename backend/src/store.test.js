@@ -1,6 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { evaluateAccess, createGrant, grantStatus } from "./store.js";
+import {
+  evaluateAccess,
+  createGrant,
+  grantStatus,
+  createAgent,
+  verifyAgentEnrollToken,
+  completeAgentEnrollment,
+  verifyAgentSecret,
+  agentView,
+  agentSockets
+} from "./store.js";
 
 const admin = { role: "admin", sub: "u-admin" };
 // Deliberately NOT "u-operator" — that id has a real seeded demo grant
@@ -46,6 +56,44 @@ test("an operator with only a future-scheduled grant is denied with a clear reas
   const access = evaluateAccess(operator, "conn-future");
   assert.equal(access.allowed, false);
   assert.equal(access.reason, "Grant has not started");
+});
+
+test("a fresh agent has a valid enrollment token and no secret yet", () => {
+  const { agent, enrollToken } = createAgent({ name: "Test Laptop", createdBy: "Alex Rivera" });
+  assert.equal(agent.name, "Test Laptop");
+  assert.equal(agent.secretHash, "");
+  assert.ok(enrollToken.length > 0);
+  assert.equal(verifyAgentEnrollToken(agent, enrollToken), true);
+  assert.equal(verifyAgentEnrollToken(agent, "wrong-token"), false);
+});
+
+test("an expired enrollment token is rejected even if the value matches", () => {
+  const { agent, enrollToken } = createAgent({ name: "Expiring", createdBy: "Alex Rivera" });
+  agent.enrollTokenExpiresAt = new Date(Date.now() - 1000).toISOString();
+  assert.equal(verifyAgentEnrollToken(agent, enrollToken), false);
+});
+
+test("completing enrollment mints a secret, burns the enrollment token, and the old token can't be reused", () => {
+  const { agent, enrollToken } = createAgent({ name: "Enrolling", createdBy: "Alex Rivera" });
+  const secret = completeAgentEnrollment(agent, { hostnameReported: "DESKTOP-ABC", os: "Windows 11 Pro" });
+  assert.ok(secret.length > 0);
+  assert.equal(agent.hostnameReported, "DESKTOP-ABC");
+  assert.equal(agent.os, "Windows 11 Pro");
+  assert.equal(agent.enrollTokenHash, null);
+  assert.equal(verifyAgentEnrollToken(agent, enrollToken), false);
+  assert.equal(verifyAgentSecret(agent, secret), true);
+  assert.equal(verifyAgentSecret(agent, "wrong-secret"), false);
+});
+
+test("agentView never exposes secretHash/enrollTokenHash, and reflects live online status", () => {
+  const { agent } = createAgent({ name: "Viewable", createdBy: "Alex Rivera" });
+  const view = agentView(agent);
+  assert.equal(view.secretHash, undefined);
+  assert.equal(view.enrollTokenHash, undefined);
+  assert.equal(view.online, false);
+  agentSockets.set(agent.id, {});
+  assert.equal(agentView(agent).online, true);
+  agentSockets.delete(agent.id);
 });
 
 test("an operator with only an expired grant is denied", () => {

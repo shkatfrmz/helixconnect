@@ -44,6 +44,13 @@ CREATE TABLE IF NOT EXISTS connections (
   clipboard_enabled BOOLEAN NOT NULL DEFAULT TRUE,
   file_transfer_enabled BOOLEAN NOT NULL DEFAULT FALSE,
   recording_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  -- "direct": guacd dials hostname:port itself, as always. "agent": the host
+  -- has no reachable inbound port, so an enrolled agent (agent_id) relays a
+  -- loopback connection to agent_port on its side back to us over a reverse
+  -- tunnel, and guacd is pointed at that loopback relay instead.
+  transport TEXT NOT NULL DEFAULT 'direct',
+  agent_id TEXT,
+  agent_port INTEGER,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -109,6 +116,23 @@ CREATE TABLE IF NOT EXISTS session_history (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- An agent is a small process run on a machine HelixConnect can't reach
+-- directly (behind NAT, no inbound port open). It dials out to us, so the
+-- only state worth persisting is its identity and secret — whether it's
+-- currently connected lives in memory, same as sessions/rooms above.
+CREATE TABLE IF NOT EXISTS agents (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  hostname_reported TEXT DEFAULT '',
+  os TEXT DEFAULT '',
+  secret_hash TEXT DEFAULT '',
+  enroll_token_hash TEXT,
+  enroll_token_expires_at TIMESTAMPTZ,
+  last_seen_at TIMESTAMPTZ,
+  created_by TEXT DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS activity (
   id TEXT PRIMARY KEY,
   user_name TEXT,
@@ -122,6 +146,7 @@ CREATE INDEX IF NOT EXISTS idx_grants_user ON grants (user_id);
 CREATE INDEX IF NOT EXISTS idx_activity_created ON activity (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_recordings_user ON recordings (user_id);
 CREATE INDEX IF NOT EXISTS idx_session_history_ended ON session_history (ended_at DESC);
+CREATE INDEX IF NOT EXISTS idx_connections_agent ON connections (agent_id);
 
 -- Additive migrations for deployments created before a column existed.
 -- CREATE TABLE IF NOT EXISTS above is a no-op against an existing table, so
@@ -135,3 +160,6 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_pending_encrypted TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE connections ADD COLUMN IF NOT EXISTS recording_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE connections ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
+ALTER TABLE connections ADD COLUMN IF NOT EXISTS transport TEXT NOT NULL DEFAULT 'direct';
+ALTER TABLE connections ADD COLUMN IF NOT EXISTS agent_id TEXT;
+ALTER TABLE connections ADD COLUMN IF NOT EXISTS agent_port INTEGER;

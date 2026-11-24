@@ -16,7 +16,8 @@ import {
   verifyPassword,
   generateTotpSecret,
   verifyTotp,
-  totpAuthUrl
+  totpAuthUrl,
+  newId
 } from "./crypto.js";
 import QRCode from "qrcode";
 import { JWT_SECRET, CORS_ORIGINS, IS_PRODUCTION } from "./config.js";
@@ -74,7 +75,18 @@ import {
   removeRecording,
   recordingsForUser,
   sessionHistory,
-  recordSessionHistory
+  recordSessionHistory,
+  agents,
+  agentSockets,
+  tunnels,
+  agentView,
+  createAgent,
+  verifyAgentEnrollToken,
+  completeAgentEnrollment,
+  verifyAgentSecret,
+  markAgentOffline,
+  persistAgent,
+  deletePersistedAgent
 } from "./store.js";
 import { authorizeUrl, exchangeCode, publicOrigin, publicSsoStatus } from "./oidc.js";
 
@@ -156,8 +168,11 @@ function probeGuacd() {
 
 function guacamoleSettings(conn, extras = {}) {
   const settings = {
-    hostname: conn.hostname,
-    port: String(conn.port),
+    // An agent-backed connection's real dial target is a loopback relay set
+    // up fresh per session (see openAgentTunnel) — conn.hostname/port there
+    // are purely informational, shown in the UI.
+    hostname: extras.hostnameOverride || conn.hostname,
+    port: String(extras.portOverride || conn.port),
     username: extras.username || conn.username || "",
     password: extras.password || conn.password || "",
     width: extras.width || 1280,
@@ -225,6 +240,7 @@ function attachGuacamoleToken(session, conn, extras = {}) {
 // actual duration), and appends a summary to sessionHistory for the usage
 // dashboard.
 function finalizeEndedSession(session) {
+  closeAgentTunnel(session);
   const rec = recordings.find((r) => r.sessionId === session.id && r.status === "recording");
   if (rec) {
     const durationMs = Math.max(0, new Date(session.endedAt).getTime() - new Date(session.startedAt).getTime());
@@ -709,7 +725,13 @@ app.post("/api/connections", auth, (req, res) => {
     fileTransferEnabled: Boolean(body.fileTransferEnabled),
     // Recording defaults OFF — it's an explicit per-host opt-in, same
     // reasoning as file transfer.
-    recordingEnabled: Boolean(body.recordingEnabled)
+    recordingEnabled: Boolean(body.recordingEnabled),
+    // "agent" transport means hostname/port above are informational only —
+    // the real dial target is a loopback relay set up fresh per session
+    // (see POST /api/sessions), tunneled through the chosen agent.
+    transport: body.transport === "agent" ? "agent" : "direct",
+    agentId: body.transport === "agent" ? body.agentId || null : null,
+    agentPort: body.transport === "agent" ? Number(body.agentPort) || Number(body.port) || 3389 : null
   };
   connections.push(conn);
   persistConnection(conn);
@@ -731,6 +753,13 @@ app.patch("/api/connections/:id", auth, (req, res) => {
   if (body.clipboardEnabled !== undefined) conn.clipboardEnabled = Boolean(body.clipboardEnabled);
   if (body.fileTransferEnabled !== undefined) conn.fileTransferEnabled = Boolean(body.fileTransferEnabled);
   if (body.recordingEnabled !== undefined) conn.recordingEnabled = Boolean(body.recordingEnabled);
+  if (body.transport !== undefined) conn.transport = body.transport === "agent" ? "agent" : "direct";
+  if (body.agentId !== undefined) conn.agentId = conn.transport === "agent" ? body.agentId || null : null;
+  if (body.agentPort !== undefined) conn.agentPort = Number(body.agentPort) || null;
+  if (conn.transport !== "agent") {
+    conn.agentId = null;
+    conn.agentPort = null;
+  }
   persistConnection(conn);
   logActivity(req.user.displayName, "Updated connection", conn.name, "admin");
   res.json(publicConnection(conn));
@@ -747,6 +776,36 @@ app.post("/api/connections/:id/check", auth, requireAdmin, async (req, res) => {
   if (!conn) return res.status(404).json({ error: "Connection not found" });
   await checkConnectionHealth(conn);
   res.json(publicConnection(conn));
+});
+
+// --- Agents ---------------------------------------------------------------
+// An agent is a small process run on a machine with no inbound RDP/VNC/SSH
+// port reachable from here (a laptop behind NAT, a firewalled workstation).
+// It dials out to /ws/agent-control below, so the only thing these routes
+// manage is its identity: creating one hands back a one-time enrollment
+// token (never stored in the clear) to paste into the agent's install
+// command: see agent/README.md.
+
+app.get("/api/agents", auth, requireAdmin, (_req, res) => {
+  res.json(agents.map(agentView));
+});
+
+app.post("/api/agents", auth, requireAdmin, (req, res) => {
+  const name = (req.body?.name || "").trim() || "New agent";
+  const { agent, enrollToken } = createAgent({ name, createdBy: req.user.displayName });
+  logActivity(req.user.displayName, "Enrolled agent", agent.name, "admin");
+  res.status(201).json({ ...agentView(agent), enrollToken });
+});
+
+app.delete("/api/agents/:id", auth, requireAdmin, (req, res) => {
+  const idx = agents.findIndex((a) => a.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: "Agent not found" });
+  const [agent] = agents.splice(idx, 1);
+  const ws = agentSockets.get(agent.id);
+  if (ws) ws.close();
+  deletePersistedAgent(agent.id);
+  logActivity(req.user.displayName, "Removed agent", agent.name, "admin");
+  res.json({ ok: true });
 });
 
 app.get("/api/activity", auth, (req, res) => {
@@ -887,7 +946,17 @@ app.post("/api/sessions", auth, async (req, res) => {
     idleTimeoutMs: Number(idleTimeoutMs) || 15 * 60 * 1000,
     grant: access.grant
   });
-  attachGuacamoleToken(session, conn, { username, password, width, height });
+  let extras = { username, password, width, height };
+  if (conn.transport === "agent" && session.mode === "live") {
+    try {
+      const port = await openAgentTunnel(conn, session);
+      extras = { ...extras, hostnameOverride: "127.0.0.1", portOverride: port };
+    } catch (err) {
+      sessions.delete(session.id);
+      return res.status(409).json({ error: err.message || "Agent unavailable" });
+    }
+  }
+  attachGuacamoleToken(session, conn, extras);
   if (conn.recordingEnabled) startRecording({ session, conn });
   logActivity(req.user.displayName, "Opened session", conn.name, "session");
   res.json({
@@ -932,7 +1001,20 @@ app.post("/api/sessions/:id/reconnect", auth, async (req, res) => {
   session.status = "active";
   session.reconnectCount += 1;
   touchSession(session);
-  attachGuacamoleToken(session, conn, req.body || {});
+  // A reconnect tears down and reopens the tunnel rather than reusing the
+  // old one — the agent may have dropped and come back with a new control
+  // socket in the meantime, so the previous loopback relay is stale either way.
+  closeAgentTunnel(session);
+  let extras = req.body || {};
+  if (conn.transport === "agent" && session.mode === "live") {
+    try {
+      const port = await openAgentTunnel(conn, session);
+      extras = { ...extras, hostnameOverride: "127.0.0.1", portOverride: port };
+    } catch (err) {
+      return res.status(409).json({ error: err.message || "Agent unavailable" });
+    }
+  }
+  attachGuacamoleToken(session, conn, extras);
   logActivity(req.user.displayName, "Reconnected", session.connectionName, "session");
   roomBroadcast(session.id, { type: "reconnected", session: sessionView(session) });
   res.json({
@@ -1014,7 +1096,18 @@ if (fs.existsSync(dist)) {
 }
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: "/ws/demo" });
+// Each of our own WebSocket servers below is constructed with noServer:true
+// and dispatched from a single shared 'upgrade' listener (registered once,
+// further down) rather than its own {server, path}. The `ws` package
+// aborts the handshake outright on any path mismatch when a {server, path}
+// instance shares an http.Server with others — so two or more such
+// instances on one server corrupt each other's connections (the first to
+// match completes its handshake, then a later-registered mismatched
+// instance's abort writes a stray "400 Bad Request" into the now-upgraded
+// socket). guacamole-lite's own bundled (older) ws version is well-behaved
+// here — it quietly ignores a path it doesn't own — so only our own
+// servers needed this fix; see the dispatcher below attachGuacamoleLite().
+const wss = new WebSocketServer({ noServer: true });
 
 wss.on("connection", (ws, req) => {
   const url = new URL(req.url, "http://localhost");
@@ -1096,6 +1189,195 @@ wss.on("connection", (ws, req) => {
       if (roomKey !== session.id) leaveRoom(roomKey, ws);
     }
   });
+});
+
+// --- Agent control + reverse tunnel ----------------------------------------
+// An enrolled agent keeps one persistent WebSocket open here (control
+// plane: enroll/auth, heartbeat). When a session opens on an agent-backed
+// connection, openAgentTunnel() below opens a loopback TCP listener and
+// asks the agent — over that same control socket — to relay a second,
+// per-tunnel WebSocket carrying raw bytes between our listener and
+// 127.0.0.1:<agentPort> on the agent's own machine (see
+// agent/windows-agent.js). guacd is then pointed at our loopback listener
+// exactly as it would be for any directly-reachable host, and never knows
+// the real target wasn't reachable directly.
+const agentControlWss = new WebSocketServer({ noServer: true });
+const agentTunnelWss = new WebSocketServer({ noServer: true });
+
+agentControlWss.on("connection", (ws, req) => {
+  const url = new URL(req.url, "http://localhost");
+  const agentId = url.searchParams.get("agentId");
+  const agent = agents.find((a) => a.id === agentId);
+  let authed = false;
+
+  if (!agent) {
+    ws.close(4004, "Unknown agent");
+    return;
+  }
+
+  ws.on("message", (raw) => {
+    let msg;
+    try {
+      msg = JSON.parse(raw.toString());
+    } catch {
+      return;
+    }
+
+    if (!authed) {
+      if (msg.type === "enroll" && verifyAgentEnrollToken(agent, msg.token)) {
+        const secret = completeAgentEnrollment(agent, { hostnameReported: msg.hostname, os: msg.os });
+        authed = true;
+        agentSockets.set(agent.id, ws);
+        logActivity("System", "Agent enrolled", agent.name, "admin");
+        ws.send(JSON.stringify({ type: "enrolled", secret }));
+        return;
+      }
+      if (msg.type === "auth" && verifyAgentSecret(agent, msg.secret)) {
+        authed = true;
+        if (msg.hostname) agent.hostnameReported = msg.hostname;
+        if (msg.os) agent.os = msg.os;
+        agentSockets.set(agent.id, ws);
+        ws.send(JSON.stringify({ type: "authed" }));
+        return;
+      }
+      ws.close(4001, "Enrollment or auth failed");
+      return;
+    }
+    // Only message type expected once authed is "heartbeat" — the open
+    // socket itself is what marks the agent online; the heartbeat just
+    // keeps intermediate proxies/load balancers from idling the connection
+    // out.
+  });
+
+  ws.on("close", () => {
+    if (authed && agentSockets.get(agent.id) === ws) {
+      agentSockets.delete(agent.id);
+      markAgentOffline(agent);
+    }
+  });
+});
+
+function wireTunnelPipe(tunnel) {
+  const { guacdSocket, agentWs } = tunnel;
+  if (!guacdSocket || !agentWs || tunnel.wired) return;
+  tunnel.wired = true;
+  clearTimeout(tunnel.idleTimer);
+  guacdSocket.on("data", (chunk) => {
+    if (agentWs.readyState === agentWs.OPEN) agentWs.send(chunk);
+  });
+  agentWs.on("message", (chunk) => {
+    if (!guacdSocket.destroyed) guacdSocket.write(chunk);
+  });
+  const cleanup = () => {
+    guacdSocket.destroy();
+    try {
+      agentWs.close();
+    } catch {
+      /* already closed */
+    }
+  };
+  guacdSocket.on("close", cleanup);
+  guacdSocket.on("error", cleanup);
+  agentWs.on("close", cleanup);
+  agentWs.on("error", cleanup);
+}
+
+agentTunnelWss.on("connection", (ws, req) => {
+  const url = new URL(req.url, "http://localhost");
+  const tunnelId = url.searchParams.get("tunnelId");
+  const agentId = url.searchParams.get("agentId");
+  const secret = url.searchParams.get("secret");
+  const tunnel = tunnels.get(tunnelId);
+  const agent = agents.find((a) => a.id === agentId);
+
+  if (!tunnel || tunnel.agentId !== agentId || !agent || !verifyAgentSecret(agent, secret)) {
+    ws.close(4003, "Invalid tunnel");
+    return;
+  }
+  tunnel.agentWs = ws;
+  wireTunnelPipe(tunnel);
+});
+
+// Opens a loopback listener guacd will dial into, and asks the connection's
+// agent to relay it to 127.0.0.1:<agentPort> on the agent's own machine.
+// Rejects if that agent isn't currently connected.
+function openAgentTunnel(conn, session) {
+  return new Promise((resolve, reject) => {
+    const agentWs = agentSockets.get(conn.agentId);
+    if (!agentWs || agentWs.readyState !== agentWs.OPEN) {
+      reject(new Error("Agent is offline"));
+      return;
+    }
+    const tunnelId = newId("tun");
+    const listener = net.createServer((guacdSocket) => {
+      const t = tunnels.get(tunnelId);
+      if (!t) {
+        guacdSocket.destroy();
+        return;
+      }
+      t.guacdSocket = guacdSocket;
+      wireTunnelPipe(t);
+    });
+    listener.on("error", (err) => reject(err));
+    listener.listen(0, "127.0.0.1", () => {
+      const port = listener.address().port;
+      const tunnel = {
+        sessionId: session.id,
+        agentId: conn.agentId,
+        listener,
+        port,
+        guacdSocket: null,
+        agentWs: null,
+        wired: false
+      };
+      // If nothing ever dials in — session creation failed downstream, or
+      // the agent never opens its leg — don't leak the listener/port forever.
+      tunnel.idleTimer = setTimeout(() => closeAgentTunnel(session), 60000);
+      tunnels.set(tunnelId, tunnel);
+      session.tunnelId = tunnelId;
+      agentWs.send(JSON.stringify({ type: "open-tunnel", tunnelId, port: conn.agentPort }));
+      resolve(port);
+    });
+  });
+}
+
+function closeAgentTunnel(session) {
+  const tunnelId = session.tunnelId;
+  if (!tunnelId) return;
+  session.tunnelId = null;
+  const tunnel = tunnels.get(tunnelId);
+  if (!tunnel) return;
+  tunnels.delete(tunnelId);
+  clearTimeout(tunnel.idleTimer);
+  try {
+    tunnel.listener.close();
+  } catch {
+    /* already closed */
+  }
+  if (tunnel.guacdSocket) tunnel.guacdSocket.destroy();
+  if (tunnel.agentWs) {
+    try {
+      tunnel.agentWs.close();
+    } catch {
+      /* already closed */
+    }
+  }
+}
+
+// Single shared dispatcher for every WebSocket path this process owns
+// directly. guacamole-lite's /ws/display isn't listed here on purpose: its
+// own (older, well-behaved) bundled ws version registers its own listener
+// and quietly ignores paths it doesn't own, so it doesn't need — and must
+// not get — a second, competing registration from us.
+server.on("upgrade", (req, socket, head) => {
+  const { pathname } = new URL(req.url, "http://localhost");
+  if (pathname === "/ws/demo") {
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
+  } else if (pathname === "/ws/agent-control") {
+    agentControlWss.handleUpgrade(req, socket, head, (ws) => agentControlWss.emit("connection", ws, req));
+  } else if (pathname === "/ws/agent-tunnel") {
+    agentTunnelWss.handleUpgrade(req, socket, head, (ws) => agentTunnelWss.emit("connection", ws, req));
+  }
 });
 
 let guacamoleLiteServer = null;
